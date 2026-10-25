@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vps-local/
+.next/
+coverage/
+artifacts/private/

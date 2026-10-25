@@ -1,0 +1,35 @@
+name: foundation
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ctdmp
+          POSTGRES_PASSWORD: ci-only-fictional-password
+          POSTGRES_DB: ctdmp_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ctdmp"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      APP_ENV: test
+      PROVIDER_MODE: mock
+      OUTBOUND_ENABLED: 'false'
+      FIXTURE_AUTH_ENABLED: 'true'
+      DATABASE_URL: postgresql://ctdmp:ci-only-fictional-password@127.0.0.1:5432/ctdmp_test
+      REDIS_URL: redis://127.0.0.1:6379
+      DELIVERY_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      FIXTURE_SECRET: ci-only-fictional-session-secret-12345
+      WEBHOOK_SECRET: ci-only-fictional-webhook-secret-12345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check

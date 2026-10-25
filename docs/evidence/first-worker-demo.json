@@ -1,0 +1,26 @@
+{
+  "recordedAt": "2026-10-23T22:05:13.535Z",
+  "mode": "MOCK",
+  "transport": "actual loopback HTTP + PostgreSQL + BullMQ worker",
+  "previewCreatedCheckin": false,
+  "firstDestination": "MockVideo_A",
+  "replacementDestination": "MockVideo_B",
+  "sameTokenUsed": true,
+  "uniqueActions": 1,
+  "assurance": "AUTHENTICATED_MEMBER",
+  "notifications": [
+    {
+      "state": "DRY_RUN_PREPARED",
+      "count": 1
+    },
+    {
+      "state": "SUPPRESSED",
+      "count": 4
+    }
+  ],
+  "limitations": [
+    "No real providers",
+    "No browser/device evidence",
+    "No production authentication"
+  ]
+}

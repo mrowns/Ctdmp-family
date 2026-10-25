@@ -1,0 +1,35 @@
+{
+  "name": "ctdmp-connect",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.8",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx packages/db/migrate.ts",
+    "db:seed": "tsx packages/db/seed.ts",
+    "test": "tsx scripts/test.ts",
+    "api": "tsx apps/api/src/main.ts",
+    "worker": "tsx apps/worker/src/main.ts",
+    "check": "pnpm typecheck && pnpm test",
+    "demo": "tsx scripts/demo.ts"
+  },
+  "dependencies": {
+    "fastify": "^5",
+    "@fastify/formbody": "^8",
+    "@fastify/cookie": "^11",
+    "bullmq": "^5",
+    "drizzle-orm": "^0.44",
+    "pg": "^8",
+    "zod": "^4",
+    "dotenv": "^17"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "tsx": "^4",
+    "@types/node": "^24",
+    "@types/pg": "^8"
+  }
+}
