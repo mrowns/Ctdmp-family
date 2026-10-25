@@ -1,6 +1,6 @@
 # Status — 25 October 2026
 
-Phase 0 foundation and Phase 1 backend/browser slice implemented in part. Full Phase 1 acceptance has NOT passed. Repository on VPS: `/home/ubuntu/ctdmp-connect`; origin `https://github.com/mrowns/Ctdmp-family.git`. Existing backend preserved in baseline commit `0684aa8`; this session checkpoint is identified by `git log -1`.
+Phase 0 foundation and Phase 1 backend/browser slice implemented in part. Full Phase 1 acceptance has NOT passed. Repository on VPS: `/home/ubuntu/ctdmp-connect`; origin `https://github.com/mrowns/Ctdmp-family.git`. Existing backend preserved in baseline commit `0684aa8`; implementation checkpoint `cbe4351` on branch `build/phase-1-browser-slice`; latest documentation checkpoint is identified by `git log -1`.
 
 Working backend: PostgreSQL migrations and fictional fixtures; validated mock-only local/test configuration; loopback PostgreSQL/Redis; preview-safe joining with conservative identity assurance; immutable Stream A→B versions; initial-event/logical-notification uniqueness; encrypted delivery payload; transactional simulated budget/consent checks; BullMQ worker; signed fictional webhook inbox.
 
@@ -15,3 +15,5 @@ Runtime: VPS systemd API and worker; HTTP `127.0.0.1:3100` only. No public appli
 Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT. Storage/maps/push/passkeys unavailable. No real messages, provider charges or real member data used. External browser navigation during tests is intercepted. Node and Playwright were installed/run on the VPS; no application files were created on the Mac.
 
 Material gaps: interim frontend is Fastify-served HTML, not the proposed Next.js/Tailwind application (ADR-009). Control room has no candidate-management commands yet. No production authentication/recovery, actual Meta envelope/verification challenge, real source registry, physical-device evidence, native build, backup restore, complete permissions/privacy lifecycle, or launch approval. Browser screenshots at a mobile viewport do not prove device behavior or WCAG compliance. See NEXT_STEPS.md.
+
+Repository synchronization: push of the build branch was attempted and failed because the VPS has no GitHub HTTPS authentication (`could not read Username`; terminal prompts disabled). All commits and evidence remain safely on the VPS. No remote branch or GitHub CI run was created. Configure repository-scoped GitHub authentication on the VPS through an approved credential mechanism; never paste a token into chat. Then run `git push -u origin build/phase-1-browser-slice` from the repository.
