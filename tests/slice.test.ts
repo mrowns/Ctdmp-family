@@ -54,6 +54,7 @@ test('T-JOIN-01/02/03/04/05/11 + T-LIVE-08/10: read-only previews, protected con
  for(const method of ['HEAD','GET'] as const) assert.equal((await server.inject({method,url:'/j/'+token})).statusCode,200);
  assert.equal((await pool.query('SELECT * FROM checkin_events WHERE program_id=$1',[f.program])).rowCount,0);
  const bad=await server.inject({method:'POST',url:'/j/'+token+'/confirm',payload:{nonce:'bad'}});assert.equal(bad.statusCode,403);
+ const cross=await server.inject({method:'POST',url:'/j/'+token+'/confirm',headers:{origin:'null','sec-fetch-site':'cross-site',host:'127.0.0.1:'+config.PORT},payload:{nonce:'bad'}});assert.equal(cross.statusCode,403);
  const browser=randomToken();const nonces=await Promise.all(Array.from({length:8},()=>mintNonce(token,browser)));
  const results=await Promise.all(nonces.map(n=>confirmJoin(token,n,browser)));assert.ok(results.every(r=>r.location.endsWith('MockVideo_A')));
  assert.equal((await pool.query('SELECT * FROM checkin_events WHERE program_id=$1',[f.program])).rowCount,1);
@@ -131,6 +132,45 @@ test('T-JOIN security: source revocation immediately blocks resolver',async()=>{
  const f=await fixture();await f.observe();const token=await f.join();const browser=randomToken();const nonce=await mintNonce(token,browser);
  await pool.query('UPDATE official_channels SET approved=false WHERE id=$1',[f.channel]);
  await assert.rejects(confirmJoin(token,nonce,browser),/SOURCE_REVIEW_REQUIRED/);
+});
+test('WEB: private HTML histories and scoped control room use current grants',async()=>{
+ const f=await fixture();await f.observe();const token=await f.join();const browser=randomToken();await confirmJoin(token,await mintNonce(token,browser),browser,f.m);
+ await pool.query("INSERT INTO grants VALUES($1,'program.read',null),($2,'program.read',null)",[f.admin,f.foreignAdmin]);
+ const own=await server.inject({url:'/account/history',headers:auth(f.m)});assert.equal(own.statusCode,200);assert.match(own.body,/Matching signed-in fictional account/);
+ const other=await server.inject({url:'/account/history',headers:auth(f.other)});assert.match(other.body,/No link openings yet/);
+ const denied=await server.inject({url:'/account/history',headers:{accept:'text/html'}});assert.equal(denied.statusCode,401);assert.match(denied.body,/Sign in/);
+ const admin=await server.inject({url:'/admin',headers:auth(f.admin)});assert.equal(admin.statusCode,200);assert.ok(admin.body.includes(f.m));
+ const foreign=await server.inject({url:'/admin',headers:auth(f.foreignAdmin)});assert.equal(foreign.statusCode,200);assert.ok(!foreign.body.includes(f.m));
+ assert.equal((await server.inject({url:'/admin',headers:auth(f.mod)})).statusCode,403);
+ await pool.query("DELETE FROM grants WHERE member_id=$1 AND permission='program.read'",[f.admin]);
+ assert.equal((await server.inject({url:'/admin',headers:auth(f.admin)})).statusCode,403);
+});
+test('WEB: cookie preference forms reject CSRF, persist withdrawal and revoke logout session',async()=>{
+ const f=await fixture();const session=config.FIXTURE_SECRET+':'+f.m;
+ const landing=await server.inject({url:'/account/preferences',headers:{cookie:'fixture_session='+session}});
+ assert.equal(landing.statusCode,200);
+ const csrf=landing.body.match(/name="csrf" value="([^"]+)"/)![1];
+ const cookies='fixture_session='+session+'; '+String(landing.headers['set-cookie']).split(';')[0];
+ const url='/account/preferences';
+ assert.equal((await server.inject({method:'POST',url,headers:{cookie:cookies,origin:'https://attacker.invalid'},payload:{csrf}})).statusCode,403);
+ assert.equal((await server.inject({method:'POST',url,headers:{cookie:cookies,origin:'http://127.0.0.1:'+config.PORT},payload:{csrf}})).statusCode,303);
+ assert.equal((await pool.query('SELECT live_start FROM preferences WHERE member_id=$1',[f.m])).rows[0].live_start,false);
+ const account=await server.inject({url:'/account',headers:{cookie:cookies}});
+ const logout=account.body.match(/name="csrf" value="([^"]+)"/)![1];
+ assert.equal((await server.inject({method:'POST',url:'/account/sign-out',headers:{cookie:cookies,origin:'http://127.0.0.1:'+config.PORT},payload:{csrf:logout}})).statusCode,303);
+ assert.equal((await server.inject({url:'/account',headers:{cookie:cookies}})).statusCode,401);
+});
+test('WEB: sign-in requires protected form and valid expiring fixture session',async()=>{
+ const f=await fixture();
+ const landing=await server.inject({url:'/demo/sign-in'});
+ const csrf=landing.body.match(/name="csrf" value="([^"]+)"/)![1];
+ const cookie=String(landing.headers['set-cookie']).split(';')[0];
+ const request={method:'POST' as const,url:'/demo/sign-in',headers:{cookie,origin:'http://127.0.0.1:'+config.PORT},payload:{csrf,access:config.FIXTURE_SECRET+':'+f.m}};
+ assert.equal((await server.inject(request)).statusCode,303);
+ assert.equal((await server.inject({...request,headers:{...request.headers,origin:'null','sec-fetch-site':'cross-site',host:'127.0.0.1:'+config.PORT}})).statusCode,403);
+ assert.equal((await server.inject({...request,headers:{...request.headers,origin:'null','sec-fetch-site':'same-origin',host:'127.0.0.1:'+config.PORT}})).statusCode,303);
+ await pool.query('UPDATE fixture_sessions SET expires_at=now() WHERE member_id=$1',[f.m]);
+ assert.equal((await server.inject(request)).statusCode,401);
 });
 after(async()=>{
  // Fixtures remain isolated and explicitly fictional; retained for inspection, never real member data.

@@ -4,8 +4,9 @@ import { observeOne, planOne, dispatchOne } from '../../../packages/shared/domai
 import { pool } from '../../../packages/db/index.ts';
 const u=new URL(config.REDIS_URL);
 const connection={host:u.hostname,port:Number(u.port||6379),maxRetriesPerRequest:null};
-const queue=new Queue('ctdmp-mock-dispatch',{connection});
-const worker=new Worker('ctdmp-mock-dispatch',async job=>dispatchOne(String(job.data.id)),{connection,concurrency:4});
+const prefix='ctdmp-'+config.APP_ENV+'-'+new URL(config.DATABASE_URL).pathname.slice(1);
+const queue=new Queue('ctdmp-mock-dispatch',{connection,prefix});
+const worker=new Worker('ctdmp-mock-dispatch',async job=>dispatchOne(String(job.data.id)),{connection,prefix,concurrency:4});
 worker.on('failed',(_job,error)=>console.error('Dispatch job failed:',error.name));
 let stopped=false;
 const pause=()=>new Promise(r=>setTimeout(r,1000));

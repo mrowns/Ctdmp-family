@@ -1,0 +1,34 @@
+{
+  "recordedAt": "2026-10-25T15:09:32.703Z",
+  "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; JavaScript disabled",
+  "providerModes": {
+    "youtube": "MOCK",
+    "whatsapp": "DRY_RUN",
+    "externalBrowserRequests": "INTERCEPTED"
+  },
+  "checks": [
+    "No invented live state on initial home",
+    "GET landing creates no check-in",
+    "No-JavaScript protected POST reaches A with one token-associated action",
+    "Cookie sign-in and protected preference withdrawal work without JavaScript",
+    "Uncertain source shows recovery page without another action",
+    "Same personal link reaches B; assurance upgrades; unique count remains one",
+    "Anonymous generic joining creates no member action",
+    "Authenticated generic joining preserves one unique member action",
+    "Scoped admin sees permitted member and immutable stream history",
+    "Other branch administrator receives no member rows from branch A",
+    "Other member and moderator cannot open admin control room; own history stays private",
+    "Worker restart and repeated source evidence preserve notification and action uniqueness"
+  ],
+  "screenshots": [
+    "mobile-home.png",
+    "mobile-history.png",
+    "control-room.png"
+  ],
+  "limitations": [
+    "No real providers or public deployment",
+    "No physical-device validation",
+    "Fixture authentication only",
+    "Not full Phase 1 acceptance"
+  ]
+}

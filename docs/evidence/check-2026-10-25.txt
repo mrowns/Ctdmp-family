@@ -1,0 +1,34 @@
+
+> ctdmp-connect@ check /home/ubuntu/ctdmp-connect
+> pnpm typecheck && pnpm test
+
+
+> ctdmp-connect@ typecheck /home/ubuntu/ctdmp-connect
+> tsc --noEmit
+
+
+> ctdmp-connect@ test /home/ubuntu/ctdmp-connect
+> tsx scripts/test.ts
+
+✔ T-LIVE-01/07 + T-MSG-06/14: confirmed once; one mock notification per member; opted-out suppressed (155.204007ms)
+✔ T-JOIN-01/02/03/04/05/11 + T-LIVE-08/10: read-only previews, protected concurrent actions, same token reaches B (219.667921ms)
+✔ T-JOIN-02: protected HTTP POST gives 303 only after nonce verification (40.428778ms)
+✔ T-JOIN-06/08/12: invalid, mismatched account, uncertain destination cause no check-in (39.59929ms)
+✔ T-AUTH-01/02/03/04: own history, scoped branch rows, moderator denial, grant revocation (58.732916ms)
+✔ T-MSG-02: opt-out after planning blocks dispatch and reserves nothing (92.570415ms)
+✔ T-MSG-09: concurrent dispatch cannot exceed remaining budget (54.117099ms)
+✔ T-LIVE-02/04/06: wrong source, upcoming video, provider outage never confirm live (39.659492ms)
+✔ T-LIVE-05: competing streams require review without notification (28.681066ms)
+✔ T-MSG-04/05: signed mock webhook durably accepted; duplicate inbox key has one effect (12.198523ms)
+✔ T-JOIN security: source revocation immediately blocks resolver (30.187299ms)
+✔ WEB: private HTML histories and scoped control room use current grants (78.683913ms)
+✔ WEB: cookie preference forms reject CSRF, persist withdrawal and revoke logout session (34.42514ms)
+✔ WEB: sign-in requires protected form and valid expiring fixture session (23.887586ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2349.00192

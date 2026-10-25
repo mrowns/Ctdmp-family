@@ -14,22 +14,25 @@
     "api": "tsx apps/api/src/main.ts",
     "worker": "tsx apps/worker/src/main.ts",
     "check": "pnpm typecheck && pnpm test",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "fixture:session": "tsx scripts/issue-fixture-session.ts",
+    "test:browser": "tsx scripts/test.ts --browser"
   },
   "dependencies": {
-    "fastify": "^5",
-    "@fastify/formbody": "^8",
     "@fastify/cookie": "^11",
+    "@fastify/formbody": "^8",
     "bullmq": "^5",
+    "dotenv": "^17",
     "drizzle-orm": "^0.44",
+    "fastify": "^5",
     "pg": "^8",
-    "zod": "^4",
-    "dotenv": "^17"
+    "zod": "^4"
   },
   "devDependencies": {
-    "typescript": "^5",
-    "tsx": "^4",
+    "@playwright/test": "1.64.1",
     "@types/node": "^24",
-    "@types/pg": "^8"
+    "@types/pg": "^8",
+    "tsx": "^4",
+    "typescript": "^5"
   }
 }

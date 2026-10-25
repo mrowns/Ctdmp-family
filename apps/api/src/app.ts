@@ -3,6 +3,8 @@ import formbody from '@fastify/formbody';
 import cookie from '@fastify/cookie';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { isSameOrigin } from '../../../packages/shared/http-security.ts';
+import { registerPages, renderPage } from '../../web/src/pages.ts';
 import { pool } from '../../../packages/db/index.ts';
 import { config } from '../../../packages/shared/config.ts';
 import { digest, randomToken } from '../../../packages/integrations/crypto.ts';
@@ -10,11 +12,18 @@ import { mintNonce, confirmJoin, DomainError, setOptIn } from '../../../packages
 export async function app() {
  const a=Fastify({logger:false,bodyLimit:65536,trustProxy:false});
  await a.register(formbody);await a.register(cookie);
- a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");return payload;});
- a.setErrorHandler((err,req,reply)=>{const known=err instanceof DomainError;reply.code(known?err.status:400).send({error:{code:known?err.code:'REQUEST_FAILED',message:known&&err.status===503?'We are checking the livestream link.':'The request could not be completed.',requestId:req.id,retryable:known&&err.status===503,fieldErrors:[]}});});
+ a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://www.youtube.com; frame-ancestors 'none'");return payload;});
+ a.setErrorHandler((err,req,reply)=>{const known=err instanceof DomainError;
+  if(req.headers.accept?.includes('text/html')) {
+   const status=known?err.status:400;
+   const message=status===503?'We are checking the livestream link. Please try again shortly.':status===401?'Sign in to open your private account.':status===403?'This action is not permitted.':status===404?'This link or page is unavailable.':'The request could not be completed. Please return and try again.';
+   return reply.code(status).type('text/html').send(renderPage('Please try again',`<section class=card data-error-code="${known?err.code:"REQUEST_FAILED"}"><h1>${message}</h1><p>No successful link opening has been recorded by this failed action.</p><a href=/live>Return to live information</a> · <a href=/demo/sign-in>Development sign-in</a></section>`));
+  }
+  reply.code(known?err.status:400).send({error:{code:known?err.code:'REQUEST_FAILED',message:known&&err.status===503?'We are checking the livestream link.':'The request could not be completed.',requestId:req.id,retryable:known&&err.status===503,fieldErrors:[]}});});
  async function principal(req:any,required=true) {
   const auth=req.headers.authorization;
-  const token=typeof auth==='string' && auth.startsWith('Bearer ')?auth.slice(7):'';
+  const token=typeof auth==='string' && auth.startsWith('Bearer ')?auth.slice(7):(req.cookies.fixture_session??'');
+  if(token && !auth && !['GET','HEAD'].includes(req.method) && !isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
   if(!token || config.FIXTURE_AUTH_ENABLED!=='true') {if(required) throw new DomainError('AUTHENTICATION_REQUIRED',401);return undefined;}
   const row=(await pool.query('SELECT m.* FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active',[digest(token)])).rows[0];
   if(!row && required) throw new DomainError('AUTHENTICATION_REQUIRED',401);
@@ -24,7 +33,7 @@ export async function app() {
  a.get('/health/live',async()=>({status:'ok',mode:'MOCK'}));
  a.get('/health/ready',async(_req,reply)=>{try{await pool.query('SELECT 1');return {status:'ready',scope:'database-only'};}catch{reply.code(503);return {status:'unavailable'};}});
  a.get('/api/v1/public/programs/current',async()=>({mode:'MOCK',program:(await pool.query('SELECT id,title,state,revision,current_sequence,local_date FROM programs ORDER BY local_date DESC LIMIT 1')).rows[0]??null}));
- a.get('/live',async(_req,reply)=>reply.type('text/html').send(page('<h2>Welcome, Champ</h2><p>This development environment uses fictional programs and simulated streams.</p><p>Public joining will be available after the member journey is verified.</p>')));
+ await registerPages(a,principal);
  a.get('/j/:token',async(req,reply)=>{
   const token=z.object({token:z.string().max(100)}).parse(req.params).token;
   // HEAD follows Fastify GET handler, but may create only a transient nonce, never engagement.
@@ -33,7 +42,7 @@ export async function app() {
   return reply.type('text/html').send(page(`<h2>Open the livestream</h2><p>This link is associated with its recipient. Opening it does not prove who watched or how long.</p><form method="post" action="/j/${encodeURIComponent(token)}/confirm"><input type="hidden" name="nonce" value="${nonce}"><button type="submit">Watch Live</button></form><p>If the stream is being checked, your action will not be recorded.</p>`));
  });
  a.post('/j/:token/confirm',async(req,reply)=>{
-  if(req.headers.origin!==`http://127.0.0.1:${config.PORT}` && req.headers.origin!==`http://localhost:${config.PORT}`) throw new DomainError('INVALID_ORIGIN',403);
+  if(!isSameOrigin(req)) throw new DomainError('INVALID_ORIGIN',403);
   const token=z.object({token:z.string().max(100)}).parse(req.params).token;
   const nonce=z.object({nonce:z.string().max(100)}).parse(req.body).nonce;
   const actor=await principal(req,false);

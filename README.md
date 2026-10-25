@@ -37,4 +37,39 @@ curl --fail http://127.0.0.1:3100/health/live
 
 With both services running, `pnpm demo` performs the one-shot fixture demonstration through actual HTTP and the database/Redis worker. It never follows mock redirects to YouTube, prints personal links, or sends messages. Evidence is stored in `docs/evidence/first-worker-demo.json`. It preserves history and refuses to reset an existing demo session. Integration tests use a separate database and can be repeated.
 
-Frontend/native directories are placeholders. See docs/STATUS.md and docs/NEXT_STEPS.md.
+## Private browser slice
+
+The API now serves a responsive, server-rendered frontend without JavaScript:
+
+- `/` and `/live`: truthful current program and deliberate generic joining.
+- `/account`, `/account/history`, `/account/preferences`: private fictional member pages.
+- `/admin`: permission-checked control room, branch-scoped link openings, stream decision history and separately granted simulated budget information.
+- `/demo/sign-in`: protected development access-code form. This is not public-pilot authentication.
+
+To issue a one-hour code on the VPS (never paste the code into chat):
+
+```bash
+export PATH=/home/ubuntu/.local/node/bin:$PATH
+cd /home/ubuntu/ctdmp-connect
+pnpm fixture:session alice
+# Read artifacts/private/alice.access privately on the VPS.
+```
+
+Use `admin-a` instead of `alice` for the explicitly granted fictional control-room account. Access-code files are ignored by Git. The website stays bound to loopback; it is not published on the static IP. To view it from your Mac, run an SSH tunnel:
+
+```bash
+ssh -i ~/Downloads/LightsailDefaultKey-eu-central-1.pem -N -L 3100:127.0.0.1:3100 ubuntu@3.73.141.132
+```
+
+Then visit `http://127.0.0.1:3100`. Browser form origins must use that port. Fixture streams use invalid/mock YouTube IDs and are not real broadcasts.
+
+For browser verification on the VPS:
+
+```bash
+pnpm exec playwright install --with-deps chromium
+pnpm test:browser
+```
+
+The browser suite uses a separate test database and worker, disables JavaScript, intercepts all external browser requests, and saves sanitized screenshots and assertions under `docs/evidence/`. It preserves fictional test history rather than resetting the demo database. It is a Chromium desktop-engine test with a mobile viewport, not physical-device validation.
+
+Native directories remain placeholders. The full Next.js frontend, real authentication and later product phases are incomplete. See docs/STATUS.md and docs/NEXT_STEPS.md.

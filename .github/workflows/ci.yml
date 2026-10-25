@@ -4,6 +4,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
       postgres:
         image: postgres:17
         env:
@@ -33,3 +39,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: |
+            docs/evidence/browser-slice.json
+            docs/evidence/screenshots/
