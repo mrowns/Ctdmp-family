@@ -1,4 +1,5 @@
 import { mockStreamDestination } from '../integrations/destinations.ts';
+import { z } from 'zod';
 import { recordTransition } from './programs.ts';
 import { pool, tx } from '../db/index.ts';
 import { randomToken, digest, encrypt } from '../integrations/crypto.ts';
@@ -101,6 +102,58 @@ export async function setOptIn(member:string,value:boolean) {
   await c.query('SELECT member_id FROM preferences WHERE member_id=$1 FOR UPDATE',[member]);
   await c.query('UPDATE preferences SET live_start=$2,revision=revision+1 WHERE member_id=$1',[member,value]);
   await c.query("INSERT INTO consent_records(member_id,purpose,opted_in,wording_version) VALUES($1,'LIVE_START',$2,'fixture-v1')",[member,value]);
+ });
+}
+const mockReceiptSchema=z.object({
+ organizationId:z.string().min(1).max(100),
+ id:z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/),
+ kind:z.enum(['sent','failed','delivered','read']),
+ messageId:z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/),
+ timestamp:z.string().regex(/^[0-9]{1,10}$/).optional(),
+ errorCode:z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional()
+}).strict();
+const receiptStatus={sent:'SENT',failed:'FAILED_FINAL',delivered:'DELIVERED',read:'READ_OBSERVED'} as const;
+const receiptRank:Record<string,number>={SENT:1,FAILED_FINAL:2,DELIVERED:3,READ_OBSERVED:4};
+async function applyReceiptProjection(c:any,notification:any,status:string,eventAt:Date) {
+ const old=notification.provider_status as string|null;
+ const oldRank=old?receiptRank[old]??0:0;
+ const newRank=receiptRank[status]??0;
+ if(newRank>oldRank) await c.query('UPDATE notifications SET provider_status=$2,provider_status_at=$3 WHERE id=$1',[notification.id,status,eventAt]);
+ else if(newRank===oldRank&&old&&(!notification.provider_status_at||eventAt.getTime()>new Date(notification.provider_status_at).getTime())) await c.query('UPDATE notifications SET provider_status_at=$2 WHERE id=$1',[notification.id,eventAt]);
+}
+export async function processWebhookOne():Promise<boolean> {
+ return tx(async c=>{
+  const inbox=(await c.query('SELECT * FROM webhook_inbox WHERE NOT processed ORDER BY received_at,event_key FOR UPDATE SKIP LOCKED LIMIT 1')).rows[0];
+  if(!inbox)return false;
+  let event;
+  try { event=mockReceiptSchema.parse(inbox.payload); }
+  catch {
+   await c.query("UPDATE webhook_inbox SET processed=true,processed_at=now(),processing_error='INVALID_STORED_EVENT' WHERE event_key=$1",[inbox.event_key]);
+   return true;
+  }
+  const organization=(await c.query('SELECT id FROM organizations WHERE id=$1',[event.organizationId])).rows[0];
+  if(!organization) {
+   await c.query("UPDATE webhook_inbox SET processed=true,processed_at=now(),processing_error='UNKNOWN_ORGANIZATION' WHERE event_key=$1",[inbox.event_key]);
+   return true;
+  }
+  const status=receiptStatus[event.kind];
+  const eventAt=event.timestamp?new Date(Number(event.timestamp)*1000):new Date(inbox.received_at);
+  const notification=(await c.query('SELECT * FROM notifications WHERE organization_id=$1 AND provider_message_id=$2 FOR UPDATE',[event.organizationId,event.messageId])).rows[0];
+  const inserted=(await c.query("INSERT INTO provider_receipts(event_key,organization_id,provider_key,provider_message_id,status,provider_event_at,received_at,notification_id,reconciliation_status,safe_error_code) VALUES($1,$2,'meta-mock',$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(event_key) DO NOTHING RETURNING event_key",[inbox.event_key,event.organizationId,event.messageId,status,eventAt,inbox.received_at,notification?.id??null,notification?'MATCHED':'UNMATCHED',event.errorCode??null])).rowCount;
+  if(inserted&&notification)await applyReceiptProjection(c,notification,status,eventAt);
+  await c.query('UPDATE webhook_inbox SET processed=true,processed_at=now(),processing_error=NULL WHERE event_key=$1',[inbox.event_key]);
+  return true;
+ });
+}
+export async function reconcileReceiptOne():Promise<boolean> {
+ return tx(async c=>{
+  const receipt=(await c.query("SELECT r.* FROM provider_receipts r WHERE r.reconciliation_status='UNMATCHED' AND EXISTS(SELECT 1 FROM notifications n WHERE n.organization_id=r.organization_id AND n.provider_message_id=r.provider_message_id) ORDER BY r.received_at,r.event_key FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
+  if(!receipt)return false;
+  const notification=(await c.query('SELECT * FROM notifications WHERE organization_id=$1 AND provider_message_id=$2 FOR UPDATE',[receipt.organization_id,receipt.provider_message_id])).rows[0];
+  if(!notification)return false;
+  await c.query("UPDATE provider_receipts SET notification_id=$2,reconciliation_status='MATCHED' WHERE event_key=$1",[receipt.event_key,notification.id]);
+  await applyReceiptProjection(c,notification,receipt.status,new Date(receipt.provider_event_at));
+  return true;
  });
 }
 export async function mintNonce(token:string,browser:string) {

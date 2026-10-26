@@ -1,0 +1,27 @@
+CTDMP Connect mock delivery-reconciliation checkpoint
+Date: 2026-10-26
+Host: Lightsail development VPS; repository /home/ubuntu/ctdmp-connect
+Branch: build/phase-1-browser-slice
+Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT
+
+Implementation:
+- Migration 008_delivery_receipts.sql adds notification provider IDs/status, processed inbox metadata, and append-only receipt rows.
+- Valid signed callback data is acknowledged only after durable inbox insertion; worker applies it asynchronously.
+- Duplicate inbox events are idempotent. Unmatched receipts stay visible and can match after a notification provider ID is known.
+- Delivery status projection preserves higher states across delayed lower-status events.
+- Receipt reporting requires global messaging.read and is audit logged; member identifiers are not exposed in the report.
+- Only the fictional payload contract is supported. Real Meta callback envelopes and sending remain unavailable.
+
+Final checks:
+- pnpm db:migrate applied migration 008 to development; test setup applied it to isolated ctdmp_test.
+- pnpm check: TypeScript passed; integration suite 26 passed, 0 failed, 0 skipped.
+- pnpm test:browser: all 18 Chromium checks passed with JavaScript disabled and external requests intercepted.
+- ctdmp-api and ctdmp-worker were active after restart.
+- /health/live returned {"status":"ok","mode":"MOCK"}; /health/ready returned {"status":"ready","scope":"database-only"}.
+
+Iteration notes:
+- A prior full run exposed a fixed mock channel ID collision from an earlier test; the fixture now uses an organization-scoped unique ID.
+- The final complete check after that correction passed.
+
+Limits:
+- No real Meta account, real messages, provider charges, or production deployment.

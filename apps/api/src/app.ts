@@ -51,6 +51,14 @@ export async function app() {
   const result=await confirmJoin(token,nonce,req.cookies.join_browser??'',actor?.id);
   return reply.code(303).header('Location',result.location).send();
  });
+ a.get('/api/v1/admin/messages/receipts',async req=>{
+  const actor=await principal(req);
+  if(!(await pool.query("SELECT 1 FROM grants WHERE member_id=$1 AND permission='messaging.read' AND branch_id IS NULL",[actor.id])).rowCount)throw new DomainError('PERMISSION_DENIED',403);
+  const items=(await pool.query('SELECT event_key,provider_key,provider_message_id,status,provider_event_at,received_at,notification_id,reconciliation_status,safe_error_code FROM provider_receipts WHERE organization_id=$1 ORDER BY received_at DESC,event_key DESC LIMIT 100',[actor.organization_id])).rows;
+  const counts=(await pool.query('SELECT reconciliation_status,status,count(*)::int AS total FROM provider_receipts WHERE organization_id=$1 GROUP BY reconciliation_status,status ORDER BY reconciliation_status,status',[actor.organization_id])).rows;
+  await pool.query("INSERT INTO audit_logs(actor,action,resource_id) VALUES($1,'messaging.receipts.read',$2)",[actor.id,actor.organization_id]);
+  return {mode:'MOCK_CONTRACT',items,counts};
+ });
  a.get('/api/v1/admin/providers/health',async req=>{
   const actor=await principal(req);
   if(!(await pool.query("SELECT 1 FROM grants WHERE member_id=$1 AND permission='program.read' AND branch_id IS NULL",[actor.id])).rowCount)throw new DomainError('PERMISSION_DENIED',403);
@@ -109,8 +117,8 @@ export async function app() {
    const expected='sha256='+createHmac('sha256',config.WEBHOOK_SECRET).update(raw).digest('hex');
    if(typeof signature!=='string' || signature.length!==expected.length || !timingSafeEqual(Buffer.from(signature),Buffer.from(expected))) throw new DomainError('INVALID_SIGNATURE',403);
    // Restricted fictional contract; real Meta payload mapping is not activated.
-   const event=z.object({id:z.string().max(100),kind:z.enum(['sent','delivered','read']),messageId:z.string().max(100)}).strict().parse(JSON.parse(raw.toString()));
-   await pool.query('INSERT INTO webhook_inbox(event_key,payload) VALUES($1,$2) ON CONFLICT DO NOTHING',['mock:'+event.id+':'+event.kind,event]);
+   const event=z.object({organizationId:z.string().min(1).max(100),id:z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/),kind:z.enum(['sent','failed','delivered','read']),messageId:z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/),timestamp:z.string().regex(/^[0-9]{1,10}$/).optional(),errorCode:z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional()}).strict().parse(JSON.parse(raw.toString()));
+   await pool.query('INSERT INTO webhook_inbox(event_key,payload) VALUES($1,$2) ON CONFLICT DO NOTHING',['mock:'+event.organizationId+':'+event.id+':'+event.kind,event]);
    return reply.code(202).send({accepted:true,mode:'MOCK_CONTRACT'});
   });
  });

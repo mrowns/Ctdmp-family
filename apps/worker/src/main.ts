@@ -1,6 +1,6 @@
 import { Queue, Worker } from 'bullmq';
 import { config } from '../../../packages/shared/config.ts';
-import { observeOne, planOne, dispatchOne } from '../../../packages/shared/domain.ts';
+import { observeOne, planOne, dispatchOne, processWebhookOne, reconcileReceiptOne } from '../../../packages/shared/domain.ts';
 import { pool } from '../../../packages/db/index.ts';
 const u=new URL(config.REDIS_URL);
 const connection={host:u.hostname,port:Number(u.port||6379),maxRetriesPerRequest:null};
@@ -15,6 +15,8 @@ const stop=()=>{stopped=true;};process.on('SIGTERM',stop);process.on('SIGINT',st
 while(!stopped) {
  try {
   for(let i=0;i<25 && await observeOne();i++) {}
+  for(let i=0;i<25 && await processWebhookOne();i++) {}
+  for(let i=0;i<25 && await reconcileReceiptOne();i++) {}
   for(let i=0;i<25 && await planOne();i++) {}
   const pending=await pool.query("SELECT id FROM notifications WHERE state='PLANNED' ORDER BY id LIMIT 100");
   for(const n of pending.rows) await queue.add('prepare',{id:n.id},{jobId:'notification-'+n.id,removeOnComplete:true,attempts:3,backoff:{type:'exponential',delay:1000}});
