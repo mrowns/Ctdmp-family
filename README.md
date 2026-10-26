@@ -2,7 +2,7 @@
 
 A digital family built in love. Working product identity; official affiliation is unverified.
 
-This repository is an early backend implementation of the supplied comprehensive specification. It is NOT a public pilot or a completed Phase 1. All members and providers are fictional. No real broadcasts, payments, provider accounts, or public deployment are enabled.
+This repository is an early backend and browser implementation of the supplied comprehensive specification. It is NOT a public pilot or a completed Phase 1. All members and providers are fictional. No real broadcasts, payments, provider accounts, or public deployment are enabled.
 
 ## Runtime
 
