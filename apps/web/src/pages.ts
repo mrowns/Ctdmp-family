@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { mockStreamDestination } from '../../../packages/integrations/destinations.ts';
 import { createScenario, queueScenarioObservation } from '../../../packages/shared/demo-scenarios.ts';
 import { currentProgram } from '../../../packages/shared/programs.ts';
-import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../../../packages/shared/administration.ts';
+import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval } from '../../../packages/shared/administration.ts';
 import { pool, tx } from '../../../packages/db/index.ts';
 import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { config } from '../../../packages/shared/config.ts';
@@ -130,6 +130,13 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
     const path='/admin/programs/'+encodeURIComponent(p.id);
     const revision=`<input type=hidden name=revision value="${p.revision}">`;
     const reason=(suffix:string)=>`<label for="reason-${escapeHtml(p.id)}-${suffix}">Reason (8–500 characters)</label><input type=text id="reason-${escapeHtml(p.id)}-${suffix}" name=reason required minlength=8 maxlength=500>`;
+    const channels=(await pool.query('SELECT id,approved,mock FROM official_channels WHERE organization_id=$1 AND program_id=$2 ORDER BY id',[m.organization_id,p.id])).rows;
+    body+='<h3>Mock official source registry</h3><p>These fictional entries only control the mock watcher. They do not verify a real YouTube channel.</p>';
+    for(const channel of channels) {
+     body+='<article class=card><p><code>'+escapeHtml(channel.id)+'</code> · '+(channel.mock?'MOCK':'REAL DISABLED')+' · '+(channel.approved?'approved':'not approved')+'</p>';
+     if(channel.mock&&p.state!=='COMPLETED')body+='<form method=post action="'+path+'/'+encodeURIComponent(channel.id)+'/approval" aria-label="Change mock source approval">'+field(csrf(req,reply,'channel:'+p.id+':'+channel.id))+revision+'<input type=hidden name=approved value="'+(channel.approved?'false':'true')+'">'+reason('channel-'+channel.id)+'<button class=secondary>'+(channel.approved?'Revoke mock source':'Approve mock source')+'</button></form>';
+     body+='</article>';
+    }
     if(p.state!=='COMPLETED') {
      const candidates=(await pool.query('SELECT * FROM (SELECT DISTINCT ON (video_id) id,video_id,live,available,provider_error,observed_at,outcome FROM mock_observations WHERE program_id=$1 ORDER BY video_id,observed_at DESC,id DESC) x ORDER BY id DESC LIMIT 5',[p.id])).rows;
      body+='<h3>Review source evidence</h3><p>Approval rechecks the approved channel, live status and evidence freshness. A reason and current program revision are required.</p>';
@@ -179,6 +186,15 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
  });
  const formInput=z.object({revision:z.coerce.number().int().min(0),reason:z.string().trim().min(8).max(500),csrf:z.string()});
  const idFrom=(req:any)=>z.object({id:z.string().min(1).max(100)}).parse(req.params).id;
+ a.post('/admin/programs/:id/channels/:channelId/approval',async(req,reply)=>{
+  const id=idFrom(req);
+  const channelId=z.object({channelId:z.string().min(1).max(200)}).parse(req.params).channelId;
+  protect(req,'channel:'+id+':'+channelId);
+  const actor=(await principal(req))!;
+  const {csrf:_csrf,...input}=formInput.extend({approved:z.enum(['true','false'])}).strict().parse(req.body);
+  await setMockChannelApproval(actor,id,{...input,channelId,approved:input.approved==='true'});
+  return reply.code(303).header('Location','/admin').send();
+ });
  a.post('/admin/programs/:id/review',async(req,reply)=>{
   const id=idFrom(req);protect(req,'review:'+id);const actor=(await principal(req))!;
   const {csrf:_csrf,...input}=formInput.extend({observationId:z.string().regex(/^[0-9]{1,18}$/),decision:z.enum(['APPROVED','REJECTED'])}).strict().parse(req.body);

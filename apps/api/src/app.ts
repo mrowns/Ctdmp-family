@@ -4,7 +4,7 @@ import cookie from '@fastify/cookie';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { currentProgram } from '../../../packages/shared/programs.ts';
-import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../../../packages/shared/administration.ts';
+import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval } from '../../../packages/shared/administration.ts';
 import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { registerPages, renderPage } from '../../web/src/pages.ts';
 import { pool } from '../../../packages/db/index.ts';
@@ -78,6 +78,12 @@ export async function app() {
  });
  const adminInput=z.object({revision:z.number().int().min(0),reason:z.string().trim().min(8).max(500)});
  const programId=(params:unknown)=>z.object({id:z.string().min(1).max(100)}).parse(params).id;
+ a.post('/api/v1/admin/programs/:id/channels/:channelId/approval',async req=>{
+  const actor=await principal(req);
+  const params=z.object({id:z.string().min(1).max(100),channelId:z.string().min(1).max(200)}).parse(req.params);
+  const input=adminInput.extend({approved:z.boolean()}).strict().parse(req.body);
+  return setMockChannelApproval(actor,params.id,{...input,channelId:params.channelId});
+ });
  for(const decision of ['APPROVED','REJECTED'] as const) {
   a.post('/api/v1/admin/programs/:id/candidates/:observationId/'+(decision==='APPROVED'?'approve':'reject'),async req=>{
    const actor=await principal(req);const params=z.object({id:z.string().min(1).max(100),observationId:z.string().regex(/^[0-9]{1,18}$/)}).parse(req.params);

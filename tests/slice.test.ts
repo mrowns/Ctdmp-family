@@ -203,6 +203,32 @@ async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
 }
 const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+test('ADMIN: mock channel governance is audited and revoking the active source pauses its resolver',async()=>{
+ const f=await fixture();const actor=await administrator(f);await f.observe();
+ const token=await f.join();const browser=randomToken();const nonce=await mintNonce(token,browser);
+ const path='/api/v1/admin/programs/'+f.program+'/channels/'+f.channel+'/approval';
+ const oldRevision=await revision(f.program);
+ let response=await server.inject({method:'POST',url:path,headers:auth(actor.id),payload:{revision:oldRevision,approved:false,reason:'Owner review revoked this mock source'}});
+ assert.equal(response.statusCode,200);assert.equal(response.json().state,'AWAITING_ADMIN');assert.equal(response.json().approved,false);
+ assert.equal((await pool.query('SELECT approved FROM official_channels WHERE id=$1',[f.channel])).rows[0].approved,false);
+ const history=(await pool.query('SELECT * FROM channel_approval_history WHERE program_id=$1',[f.program])).rows[0];
+ assert.equal(history.actor,actor.id);assert.equal(history.previous_approved,true);assert.equal(history.approved,false);assert.equal(history.evidence.activeDestinationInvalidated,true);
+ assert.equal((await pool.query("SELECT action FROM audit_logs WHERE actor=$1 AND resource_id=$2 ORDER BY id DESC LIMIT 1",[actor.id,f.channel])).rows[0].action,'channel.mock_revoked');
+ await assert.rejects(confirmJoin(token,nonce,browser),/STREAM_REVIEW_REQUIRED/);
+ assert.equal((await pool.query('SELECT * FROM checkin_events WHERE program_id=$1',[f.program])).rowCount,0);
+ response=await server.inject({method:'POST',url:path,headers:auth(actor.id),payload:{revision:oldRevision,approved:true,reason:'Stale form must not reapprove source'}});
+ assert.equal(response.statusCode,409);
+ response=await server.inject({method:'POST',url:path,headers:auth(actor.id),payload:{revision:await revision(f.program),approved:true,reason:'Owner review approved mock source'}});
+ assert.equal(response.statusCode,200);assert.equal(response.json().state,'AWAITING_ADMIN');
+ const realId='fixture-real-disabled';
+ await pool.query('INSERT INTO official_channels(id,organization_id,program_id,approved,mock) VALUES($1,$2,$3,false,false)',[realId,f.org,f.program]);
+ response=await server.inject({method:'POST',url:'/api/v1/admin/programs/'+f.program+'/channels/'+realId+'/approval',headers:auth(actor.id),payload:{revision:await revision(f.program),approved:true,reason:'Real sources need activation approval'}});
+ assert.equal(response.statusCode,409);assert.equal(response.json().error.code,'REAL_SOURCE_CONFIGURATION_DISABLED');
+ const scoped=await administrator(f,'program.manage',f.foreignAdmin);
+ await pool.query('UPDATE grants SET branch_id=$2 WHERE member_id=$1 AND permission=$3',[scoped.id,f.org+'-b','program.manage']);
+ response=await server.inject({method:'POST',url:path,headers:auth(scoped.id),payload:{revision:await revision(f.program),approved:false,reason:'Branch grant must not change global source'}});
+ assert.equal(response.statusCode,403);
+});
 test('ADMIN: competing candidate approval is revision-checked and stores evidence; completion is final',async()=>{
  const f=await fixture();const actor=await administrator(f);const first=await candidate(f);await candidate(f,'MockVideo_B');while(await observeOne()){}
  assert.equal((await pool.query('SELECT state FROM programs WHERE id=$1',[f.program])).rows[0].state,'AWAITING_ADMIN');

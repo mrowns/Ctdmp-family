@@ -54,3 +54,12 @@ Actual verification on the Lightsail development host: pnpm check passed TypeScr
 During implementation, an initial integration run found a PostgreSQL timestamp parameter inference error; a later test edit caused a duplicate fixture grant. Both were corrected. The final complete pnpm check and browser run passed. Detailed evidence: docs/evidence/provider-health-2026-10-26.txt and updated browser screenshots/JSON.
 
 Provider modes remain YouTube MOCK, WhatsApp MOCK/DRY_RUN, webhook MOCK_CONTRACT. No credentials, real member data, external messages, provider charges or public deployment were used. Production identity, real Meta payload handling, schedule/source governance, receipt reconciliation, privacy retention and other product phases remain incomplete. Full Phase 1 acceptance has not passed.
+
+
+## 26 October checkpoint — mock source governance
+
+Added migration 007_channel_governance.sql, immutable channel approval history, and protected API/browser commands for mock source approval or revocation. Commands require a global program.manage grant, recent fixture authentication, a reason, and current program revision. Real source entries cannot be approved in the MOCK environment. Revoking the source behind the active stream moves the program to AWAITING_ADMIN so the resolver stops; re-approval alone does not restore a live claim. The control room labels this registry as mock-only.
+
+Actual verification on Lightsail: pnpm check passed TypeScript and 26 PostgreSQL/API integration tests (26 passed, 0 failed, 0 skipped). The new case covers audit evidence, active-source suspension, personal-link recovery behavior, stale revision rejection, blocked real-source configuration, and branch-scoped grant denial. pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. Migration 007 was applied to development and isolated test databases. After restarting ctdmp-api and ctdmp-worker, both services were active and liveness/readiness returned healthy responses. Evidence: docs/evidence/channel-governance-2026-10-26.txt.
+
+This completes only fictional/mock source governance. Real YouTube channel authority, recurrence/time zone configuration, real account access, and provider-specific verification remain unset and unimplemented. Phase 1 acceptance and the complete product remain unfinished.

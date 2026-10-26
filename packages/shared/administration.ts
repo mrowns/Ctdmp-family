@@ -64,6 +64,28 @@ export async function reviewCandidate(actor:AdminActor,id:string,input:ProgramCo
   return {programId:p.id,revision:p.revision+1,decision:input.decision};
  });
 }
+export async function setMockChannelApproval(actor:AdminActor,id:string,input:ProgramCommand&{channelId:string;approved:boolean}) {
+ validateReason(input.reason);
+ return tx(async c=>{
+  await requireAdministration(c,actor,'program.manage');
+  const p=await program(c,actor,id,input.revision);
+  if(p.state==='COMPLETED')throw new DomainError('SESSION_COMPLETED',409);
+  const channel=(await c.query('SELECT * FROM official_channels WHERE id=$1 AND program_id=$2 AND organization_id=$3 FOR UPDATE',[input.channelId,p.id,p.organization_id])).rows[0];
+  if(!channel)throw new DomainError('NOT_FOUND',404);
+  if(!channel.mock)throw new DomainError('REAL_SOURCE_CONFIGURATION_DISABLED',409);
+  if(channel.approved===input.approved)throw new DomainError('CHANNEL_STATE_UNCHANGED',409);
+  const current=p.current_sequence?(await c.query('SELECT channel_id FROM stream_versions WHERE program_id=$1 AND sequence=$2',[p.id,p.current_sequence])).rows[0]:null;
+  const invalidatesActive=!input.approved&&current?.channel_id===channel.id;
+  const nextState=invalidatesActive?'AWAITING_ADMIN':p.state;
+  await c.query('UPDATE official_channels SET approved=$2 WHERE id=$1',[channel.id,input.approved]);
+  await c.query('UPDATE programs SET state=$2,revision=revision+1 WHERE id=$1',[p.id,nextState]);
+  const evidence={providerMode:'mock',channelId:channel.id,previousApproved:channel.approved,approved:input.approved,activeDestinationInvalidated:invalidatesActive};
+  await recordTransition(c,p,nextState,input.reason,actor.id,null,evidence);
+  await c.query('INSERT INTO channel_approval_history(organization_id,program_id,channel_id,actor,previous_approved,approved,reason,program_revision,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[p.organization_id,p.id,channel.id,actor.id,channel.approved,input.approved,input.reason,p.revision+1,evidence]);
+  await audit(c,actor,input.approved?'channel.mock_approved':'channel.mock_revoked',channel.id,{reason:input.reason,programId:p.id,revision:p.revision+1,activeDestinationInvalidated:invalidatesActive});
+  return {programId:p.id,channelId:channel.id,approved:input.approved,state:nextState,revision:p.revision+1};
+ });
+}
 export async function finishProgram(actor:AdminActor,id:string,input:ProgramCommand) {
  validateReason(input.reason);
  return tx(async c=>{

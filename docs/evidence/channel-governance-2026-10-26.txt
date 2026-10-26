@@ -1,0 +1,24 @@
+CTDMP Connect mock source-governance checkpoint
+Date: 2026-10-26
+Host: Lightsail development VPS; repository /home/ubuntu/ctdmp-connect
+Branch: build/phase-1-browser-slice
+Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT
+
+Implementation:
+- Migration 007_channel_governance.sql adds immutable scoped approval history.
+- Mock source approval/revocation requires recent fixture authentication, global program.manage, reason, and expected program revision.
+- Active destination source revocation moves the session to AWAITING_ADMIN and blocks deliberate link resolution.
+- Re-approval does not silently restore LIVE_CONFIRMED.
+- Real source configuration is rejected while providers remain MOCK.
+- Browser control room labels the configuration as a mock registry.
+
+Final checks:
+- pnpm db:migrate applied migration 007 to development; test setup applied it to isolated ctdmp_test.
+- pnpm check: TypeScript passed; integration suite 26 passed, 0 failed, 0 skipped.
+- pnpm test:browser: all 18 Chromium checks passed with JavaScript disabled and external requests intercepted.
+- ctdmp-api and ctdmp-worker were active after restart.
+- /health/live returned {"status":"ok","mode":"MOCK"}; /health/ready returned {"status":"ready","scope":"database-only"}.
+
+Limits:
+- This is fictional/mock configuration, not evidence that any YouTube channel is owned or official.
+- No real member data, external message, charge, or public deployment.
