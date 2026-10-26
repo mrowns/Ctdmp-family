@@ -246,6 +246,40 @@ async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
 }
 const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+test('ADMIN: one-off schedule is timezone-checked, revisioned, and available through a protected browser form',async()=>{
+ const f=await fixture();const actor=await administrator(f);const path='/api/v1/admin/programs/'+f.program+'/schedule';
+ const next=await server.inject({url:'/api/v1/public/programs/next'});
+ assert.equal(next.statusCode,200);assert.equal(next.json().mode,'MOCK');assert.ok(Object.hasOwn(next.json(),'program'));
+ const future=new Date(Date.now()+2*86400000);const scheduledStartAt=new Date(future.getTime()+3600000).toISOString().slice(0,19)+'+01:00';
+ const body={revision:0,reason:'Owner configured fictional schedule',scheduledStartAt,timeZone:'Africa/Lagos'};
+ let response=await server.inject({method:'PUT',url:path,headers:auth(actor.id),payload:{...body,scheduledStartAt:scheduledStartAt.replace('+01:00','+00:00')}});
+ assert.equal(response.statusCode,422);assert.equal(response.json().error.code,'TIMEZONE_OFFSET_MISMATCH');
+ response=await server.inject({method:'PUT',url:path,headers:auth(actor.id),payload:{...body,timeZone:'Unknown/Zone'}});
+ assert.equal(response.statusCode,422);assert.equal(response.json().error.code,'INVALID_TIME_ZONE');
+ response=await server.inject({method:'PUT',url:path,headers:auth(actor.id),payload:{...body,scheduledStartAt:'2027-03-28T02:30:00+01:00',timeZone:'Europe/Berlin'}});
+ assert.equal(response.statusCode,422);assert.equal(response.json().error.code,'TIMEZONE_OFFSET_MISMATCH');
+ await pool.query("INSERT INTO grants(member_id,permission,branch_id) VALUES($1,'program.read',NULL)",[actor.id]);
+ const session=config.FIXTURE_SECRET+':'+actor.id;
+ const landing=await server.inject({url:'/admin',headers:{cookie:'fixture_session='+session}});
+ assert.equal(landing.statusCode,200);assert.match(landing.body,/One-off mock schedule/);
+ const form=landing.body.match(new RegExp('<form method=post action="/admin/programs/'+f.program+'/schedule">([\\s\\S]*?)</form>'))?.[1];
+ assert.ok(form);const csrf=form.match(/name="csrf" value="([^"]+)"/)?.[1];assert.ok(csrf);
+ const browserCookie=String(landing.headers['set-cookie']).split(';')[0];
+ const cookie='fixture_session='+session+'; '+browserCookie;
+ response=await server.inject({method:'POST',url:'/admin/programs/'+f.program+'/schedule',headers:{cookie,origin:'http://127.0.0.1:'+config.PORT,host:'127.0.0.1:'+config.PORT},payload:{csrf,revision:'0',reason:body.reason,scheduledStartAt,timeZone:body.timeZone}});
+ assert.equal(response.statusCode,303);
+ let program=(await pool.query('SELECT * FROM programs WHERE id=$1',[f.program])).rows[0];
+ assert.equal(new Date(program.local_date).toISOString().slice(0,10),scheduledStartAt.slice(0,10));assert.equal(program.schedule_timezone,'Africa/Lagos');assert.equal(new Date(program.scheduled_start_at).toISOString(),new Date(scheduledStartAt).toISOString());
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM program_schedule_history WHERE program_id=$1',[f.program])).rows[0].n,1);
+ assert.equal((await pool.query("SELECT action FROM audit_logs WHERE actor=$1 AND action='program.schedule_updated' AND resource_id=$2",[actor.id,f.program])).rowCount,1);
+ response=await server.inject({method:'PUT',url:path,headers:auth(actor.id),payload:body});
+ assert.equal(response.statusCode,409);assert.equal(response.json().error.code,'REVISION_CONFLICT');
+ const futureAgain=new Date(Date.now()+3*86400000);const later=new Date(futureAgain.getTime()+3600000).toISOString().slice(0,19)+'+01:00';
+ response=await server.inject({method:'PUT',url:path,headers:auth(actor.id),payload:{...body,revision:1,scheduledStartAt:later,reason:'Reschedule the fictional occurrence'}});
+ assert.equal(response.statusCode,200);assert.equal(response.json().localDate,later.slice(0,10));
+ program=(await pool.query('SELECT * FROM programs WHERE id=$1',[f.program])).rows[0];assert.equal(program.revision,2);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM program_schedule_history WHERE program_id=$1',[f.program])).rows[0].n,2);
+});
 test('ADMIN: mock channel governance is audited and revoking the active source pauses its resolver',async()=>{
  const f=await fixture();const actor=await administrator(f);await f.observe();
  const token=await f.join();const browser=randomToken();const nonce=await mintNonce(token,browser);

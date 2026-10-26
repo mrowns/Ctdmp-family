@@ -19,6 +19,11 @@ All changes require a reason (8–500 characters) and current revision. JSON API
 - PUT /api/v1/admin/sending-controls: revision, paused, reason. Atomically toggles the organization's dry-run authorization switch; existing provider acceptance is outside this mock-only implementation. Workers recheck the switch while holding its shared lock. Stale controls return 409.
 - GET /api/v1/admin/programs/{id}/transitions: explicitly permitted organization-scoped evidence, bounded to 100 rows.
 
+- PUT /api/v1/admin/programs/{id}/schedule: revision, reason, scheduledStartAt and timeZone. Requires a future RFC3339 timestamp with an explicit offset that round-trips in the supplied IANA zone. Nonexistent local daylight-saving times and mismatched offsets are rejected. Saves one-off mock schedule history; recurrence is not implemented.
+- POST /admin/programs/{id}/schedule: the equivalent CSRF-protected no-JavaScript administrator form.
+- GET /api/v1/public/programs/next: the next future scheduled occurrence for configured ORGANIZATION_ID. A schedule never changes a session to live by itself.
+
+
 Program and observation lock order is consistent between worker and administrator commands. A delayed/stale decision returns 409. Reauthentication and insufficient grants return 403; forbidden organizations/objects return 404. Evidence and audit context contain safe mock IDs and reasons, never joining capabilities or credentials. Existing pre-migration transitions are not fabricated or backfilled.
 
 ## Browser demonstration
@@ -36,6 +41,6 @@ The fake observation endpoints accept only sessions created by the fixture workf
 
 ## Evidence and remaining work
 
-The 26 October run passed 25 PostgreSQL/API integration tests and 18 Chromium checks with JavaScript disabled. The browser suite covers the owner-facing scenario controls, own prepared alert, Stream A→B, stale forms, restricted branches and worker restart. External requests are intercepted, and mock destinations are local. See docs/evidence/check-2026-10-26.txt, browser-2026-10-26.txt, browser-slice.json and screenshots/.
+The latest 26 October run passed 27 PostgreSQL/API integration tests and 18 Chromium checks with JavaScript disabled. The browser suite covers the owner-facing scenario controls, own prepared alert, Stream A→B, stale forms, restricted branches and worker restart. External requests are intercepted, and mock destinations are local. See docs/evidence/check-2026-10-26.txt, docs/evidence/browser-2026-10-26.txt, docs/evidence/provider-health-2026-10-26.txt, docs/evidence/channel-governance-2026-10-26.txt, docs/evidence/delivery-reconciliation-2026-10-26.txt, docs/evidence/program-schedule-2026-10-26.txt, browser-slice.json and screenshots/.
 
-Still incomplete: real WebAuthn/recovery, production admin assurance, real Meta contracts/activation, official source/schedule configuration, richer scheduling and channel administration, full Next.js client, observation freshness policy across provider outages, privacy retention/deletion, restore/load/security review, mobile devices and later content/human workflows. These checks do not establish full Phase 1 acceptance or production readiness.
+Still incomplete: real WebAuthn/recovery, production admin assurance, real Meta contracts/activation, verified real YouTube sources, owner-confirmed recurrence and schedule policy, full Next.js client, provider freshness from a real adapter, privacy retention/deletion, restore/load/security review, mobile devices and later content/human workflows. These checks do not establish full Phase 1 acceptance or production readiness.

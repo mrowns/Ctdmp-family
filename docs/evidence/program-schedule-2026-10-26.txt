@@ -1,0 +1,26 @@
+CTDMP Connect one-off mock scheduling checkpoint
+Date: 2026-10-26
+Host: Lightsail development VPS; repository /home/ubuntu/ctdmp-connect
+Branch: build/phase-1-browser-slice
+Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT
+
+Implementation:
+- Migration 009_program_schedules.sql adds one-off schedule fields and revisioned history.
+- Administrator API and no-JavaScript browser form require program.manage, recent fixture authentication, reason, and current revision.
+- RFC3339 timestamps require an explicit UTC offset; server validates the selected IANA time zone by round-tripping local clock fields. Nonexistent local DST times and offset mismatches are rejected.
+- Local program date follows the schedule's wall date. Public current/next schedule APIs and Home display show scheduled time but never change program state to LIVE_CONFIRMED.
+- Recurrence and actual CTDMP schedule are not configured.
+
+Final checks:
+- pnpm db:migrate applied migration 009 to development; test setup applied it to isolated ctdmp_test.
+- pnpm check: TypeScript passed; integration suite 27 passed, 0 failed, 0 skipped.
+- pnpm test:browser: all 18 Chromium checks passed with JavaScript disabled and external requests intercepted.
+- ctdmp-api and ctdmp-worker were active after restart.
+- /health/live returned {"status":"ok","mode":"MOCK"}; /health/ready returned {"status":"ready","scope":"database-only"}.
+
+Iteration notes:
+- Initial checks caught an over-escaped date parser regex, then a multi-form CSRF binding issue, and a PostgreSQL date assertion that expected a string. All were corrected; the final complete checks passed.
+- git diff --check passed.
+
+Limits:
+- No real schedule, recurrence, organization time zone approval, official channel, real provider connection or public deployment.

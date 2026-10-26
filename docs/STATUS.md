@@ -53,7 +53,7 @@ Actual verification on the Lightsail development host: pnpm check passed TypeScr
 
 During implementation, an initial integration run found a PostgreSQL timestamp parameter inference error; a later test edit caused a duplicate fixture grant. Both were corrected. The final complete pnpm check and browser run passed. Detailed evidence: docs/evidence/provider-health-2026-10-26.txt and updated browser screenshots/JSON.
 
-Provider modes remain YouTube MOCK, WhatsApp MOCK/DRY_RUN, webhook MOCK_CONTRACT. No credentials, real member data, external messages, provider charges or public deployment were used. Production identity, real Meta payload handling, schedule/source governance, receipt reconciliation, privacy retention and other product phases remain incomplete. Full Phase 1 acceptance has not passed.
+Provider modes remain YouTube MOCK, WhatsApp MOCK/DRY_RUN, webhook MOCK_CONTRACT. No credentials, real member data, external messages, provider charges or public deployment were used. Production identity, real Meta payload handling, schedule/source governance, real receipt reconciliation, privacy retention and other product phases remain incomplete. Full Phase 1 acceptance has not passed.
 
 
 ## 26 October checkpoint — mock source governance
@@ -71,9 +71,20 @@ Added migration 008_delivery_receipts.sql. Signed MOCK_CONTRACT webhook events a
 
 Actual verification on Lightsail: pnpm check passed TypeScript and 26 PostgreSQL/API integration tests (26 passed, 0 failed, 0 skipped). The receipt case covers signature rejection, durable duplicate acceptance, unmatched persistence, later matching, monotonic delayed status, read observations, failed events, scoped access, audit, and control-room display. pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. Migration 008 was applied to development and test databases. The API and worker were restarted; both are active, /health/live reports MOCK, and /health/ready reports database readiness. Evidence: docs/evidence/delivery-reconciliation-2026-10-26.txt.
 
-The earlier final test run found a fixed test-fixture collision from a globally reused mock channel ID; the fixture now uses an organization-specific ID. The final complete checks passed. Remaining: actual Meta account mapping/payload contract, provider send and ambiguous-outcome reconciliation, rate-card reconciliation, privacy retention, schedule governance, and launch-ready authentication. Full Phase 1 acceptance has not passed.
+The earlier final test run found a fixed test-fixture collision from a globally reused mock channel ID; the fixture now uses an organization-specific ID. The final complete checks passed. Remaining: actual Meta account mapping/payload contract, provider send and ambiguous-outcome reconciliation, rate-card reconciliation, privacy retention, owner-confirmed recurring schedules, and launch-ready authentication. Full Phase 1 acceptance has not passed.
 
 
 ## Current repository checkpoint — 26 October 2026
 
 Latest implementation commit 675603464fc483a3fabbb50a2a8511cde3a3f3da is pushed to origin/build/phase-1-browser-slice and matches the VPS HEAD. Working tree was clean after push. The earlier hash ee1ce30ddbbe919e32de053de79f2ebafdfdc9bd in the provider-health subsection was the state at that earlier checkpoint; later source-governance and delivery-reconciliation commits are recorded below it.
+
+
+## 26 October checkpoint — one-off mock scheduling
+
+Added migration 009_program_schedules.sql, audited schedule history, a protected API command and a no-JavaScript control-room form for one-off mock sessions. Administrators supply an RFC3339 timestamp with an explicit offset plus an IANA zone. The server verifies that the timestamp round-trips in that zone, rejects nonexistent daylight-saving times or offset mismatches, and requires a future time, current program revision, reason, recent fixture authentication and global program.manage. The session local date is derived from the entered wall time. Public current/next schedule contracts and Home display show the configured time without changing program state or claiming a stream is live.
+
+A CSRF helper issue surfaced while testing the multi-form schedule control room: several forms on one response received different browser bindings. The request now reuses one random browser binding for all CSRF fields on that page.
+
+Actual verification on Lightsail: pnpm check passed TypeScript and 27 PostgreSQL/API integration tests (27 passed, 0 failed, 0 skipped); pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. The schedule test covers offset/time-zone mismatch, invalid zones, a nonexistent daylight-saving time, protected form submission, audit/history, stale revisions and rescheduling. Migration 009 is applied to development and test databases. The services restarted and returned active MOCK/database-ready health. Evidence: docs/evidence/program-schedule-2026-10-26.txt.
+
+Limits: this is a one-off MOCK schedule editor. Real recurrence, the organization-approved schedule/time zone, authoritative channel evidence and live YouTube verification remain unconfigured. It is not a production schedule or launch approval.

@@ -24,3 +24,6 @@ Next real integration decisions: authoritative channel IDs and schedule; account
 
 
 26 October update: durable signed mock receipt inbox processing, unmatched-to-matched reconciliation, monotonic status projections, scoped/audited receipt reads, and an admin view are implemented. Migration 008 is applied. Verification: 26/26 integration tests and 18/18 browser checks passed. This does not validate Meta's real webhook format or provider delivery; those require official documentation and account mapping.
+
+
+26 October update: one-off mock session scheduling is implemented with timezone/offset round-trip checks, daylight-saving gap rejection, revision/history/audit, protected no-JavaScript form, and public schedule display. It does not establish the real CTDMP schedule or recurrence. Latest checks: 27/27 integration tests and 18/18 browser checks; see docs/evidence/program-schedule-2026-10-26.txt.

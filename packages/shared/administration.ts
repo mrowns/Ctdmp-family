@@ -64,6 +64,35 @@ export async function reviewCandidate(actor:AdminActor,id:string,input:ProgramCo
   return {programId:p.id,revision:p.revision+1,decision:input.decision};
  });
 }
+function validateScheduleTime(scheduledStartAt:string,timeZone:string) {
+ const match=/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(Z|[+-]\d{2}:\d{2})$/.exec(scheduledStartAt);
+ if(!match)throw new DomainError('INVALID_SCHEDULE_DATETIME',422);
+ const instant=new Date(scheduledStartAt);
+ if(!Number.isFinite(instant.getTime()))throw new DomainError('INVALID_SCHEDULE_DATETIME',422);
+ let parts:Intl.DateTimeFormatPart[];
+ try { parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(instant); }
+ catch { throw new DomainError('INVALID_TIME_ZONE',422); }
+ const value=(type:string)=>parts.find(part=>part.type===type)?.value??'';
+ const actual=value('year')+'-'+value('month')+'-'+value('day')+'T'+value('hour')+':'+value('minute')+':'+value('second');
+ if(actual!==match[1]+'T'+match[2]+':'+match[3]+':'+match[4])throw new DomainError('TIMEZONE_OFFSET_MISMATCH',422);
+ if(instant.getTime()<=Date.now())throw new DomainError('SCHEDULE_MUST_BE_FUTURE',422);
+ return {instant,localDate:match[1]};
+}
+export async function setProgramSchedule(actor:AdminActor,id:string,input:ProgramCommand&{scheduledStartAt:string;timeZone:string}) {
+ validateReason(input.reason);
+ if(input.timeZone.length>64||!input.timeZone.trim())throw new DomainError('INVALID_TIME_ZONE',422);
+ const schedule=validateScheduleTime(input.scheduledStartAt,input.timeZone);
+ return tx(async c=>{
+  await requireAdministration(c,actor,'program.manage');
+  const p=await program(c,actor,id,input.revision);
+  if(!['SCHEDULED','AWAITING_ADMIN'].includes(p.state))throw new DomainError('SCHEDULE_LOCKED',409);
+  if(p.scheduled_start_at&&new Date(p.scheduled_start_at).getTime()===schedule.instant.getTime()&&p.schedule_timezone===input.timeZone)throw new DomainError('SCHEDULE_UNCHANGED',409);
+  await c.query('UPDATE programs SET scheduled_start_at=$2::timestamptz,schedule_timezone=$3,local_date=$4,revision=revision+1 WHERE id=$1',[p.id,schedule.instant,input.timeZone,schedule.localDate]);
+  await c.query('INSERT INTO program_schedule_history(program_id,actor,previous_start_at,previous_timezone,scheduled_start_at,schedule_timezone,local_date,reason,program_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[p.id,actor.id,p.scheduled_start_at,p.schedule_timezone,schedule.instant,input.timeZone,schedule.localDate,input.reason,p.revision+1]);
+  await audit(c,actor,'program.schedule_updated',p.id,{reason:input.reason,revision:p.revision+1,scheduledStartAt:schedule.instant.toISOString(),timeZone:input.timeZone,localDate:schedule.localDate});
+  return {programId:p.id,revision:p.revision+1,scheduledStartAt:schedule.instant.toISOString(),timeZone:input.timeZone,localDate:schedule.localDate};
+ });
+}
 export async function setMockChannelApproval(actor:AdminActor,id:string,input:ProgramCommand&{channelId:string;approved:boolean}) {
  validateReason(input.reason);
  return tx(async c=>{

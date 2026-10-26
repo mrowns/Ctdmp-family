@@ -4,7 +4,7 @@ import cookie from '@fastify/cookie';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { currentProgram } from '../../../packages/shared/programs.ts';
-import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval } from '../../../packages/shared/administration.ts';
+import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval, setProgramSchedule } from '../../../packages/shared/administration.ts';
 import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { registerPages, renderPage } from '../../web/src/pages.ts';
 import { pool } from '../../../packages/db/index.ts';
@@ -34,7 +34,8 @@ export async function app() {
  const page=(body:string)=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CTDMP Connect — Demo</title><style>body{font:18px system-ui;background:#101c30;color:#fff4df;max-width:44rem;margin:3rem auto;padding:1rem}a{color:#f3cf81}button{font:inherit;padding:1rem 2rem;border:0;border-radius:.5rem;background:#f3cf81;color:#101c30}small{display:block;margin:2rem 0}</style><body><p>MOCK ENVIRONMENT · NO REAL MESSAGES</p><h1>CTDMP Connect</h1>${body}<small>Working product identity. Official affiliation has not been verified.</small></body></html>`;
  a.get('/health/live',async()=>({status:'ok',mode:'MOCK'}));
  a.get('/health/ready',async(_req,reply)=>{try{await pool.query('SELECT 1');return {status:'ready',scope:'database-only'};}catch{reply.code(503);return {status:'unavailable'};}});
- a.get('/api/v1/public/programs/current',async()=>{const p=await currentProgram();return {mode:'MOCK',program:p?{id:p.id,title:p.title,state:p.state,revision:p.revision,current_sequence:p.current_sequence,local_date:p.local_date}:null};});
+ a.get('/api/v1/public/programs/current',async()=>{const p=await currentProgram();return {mode:'MOCK',program:p?{id:p.id,title:p.title,state:p.state,revision:p.revision,current_sequence:p.current_sequence,local_date:p.local_date,scheduled_start_at:p.scheduled_start_at,schedule_timezone:p.schedule_timezone}:null};});
+ a.get('/api/v1/public/programs/next',async()=>{const row=(await pool.query("SELECT id,title,state,local_date,scheduled_start_at,schedule_timezone FROM programs WHERE organization_id=$1 AND state='SCHEDULED' AND scheduled_start_at>now() ORDER BY scheduled_start_at,id LIMIT 1",[config.ORGANIZATION_ID])).rows[0];return {mode:'MOCK',program:row??null};});
  await registerPages(a,principal);
  a.get('/j/:token',async(req,reply)=>{
   const token=z.object({token:z.string().max(100)}).parse(req.params).token;
@@ -50,6 +51,12 @@ export async function app() {
   const actor=await principal(req,false);
   const result=await confirmJoin(token,nonce,req.cookies.join_browser??'',actor?.id);
   return reply.code(303).header('Location',result.location).send();
+ });
+ a.put('/api/v1/admin/programs/:id/schedule',async req=>{
+  const actor=await principal(req);
+  const id=programId(req.params);
+  const input=adminInput.extend({scheduledStartAt:z.string().min(20).max(40),timeZone:z.string().min(1).max(64)}).strict().parse(req.body);
+  return setProgramSchedule(actor,id,input);
  });
  a.get('/api/v1/admin/messages/receipts',async req=>{
   const actor=await principal(req);
