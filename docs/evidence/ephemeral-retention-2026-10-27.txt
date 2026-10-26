@@ -1,0 +1,31 @@
+CTDMP ephemeral retention checkpoint — 2026-10-27
+
+Environment: private Lightsail development host; APP_ENV=local with MOCK providers and fictional records only. No public deployment, real member records, outbound messages, or provider charges.
+
+Changes:
+- Migration 010 adds a notification-to-join-capability reference, the capability expiry for encrypted delivery envelopes, a consistency constraint, and cleanup indexes.
+- The worker runs a bounded cleanup batch (maximum 500 rows) once per minute.
+- Expired planned notifications become EXPIRED, their encrypted URL payload is erased on the next successful worker sweep, and their link capability is revoked. A prepared mock alert retains its encrypted link only through the linked six-hour capability lifetime; the worker sweeps every 60 seconds while healthy.
+- Consumed/expired nonces are deleted. Revoked/expired link digests are deleted only when no nonce or notification references them.
+- Consent history, check-in history, receipt history, audit evidence, budgets, and other business records are outside this cleanup.
+- Worker output reports aggregate counts only; it does not log links or member identifiers.
+
+Verification on the VPS:
+- Migration 010 applied to development and isolated test databases.
+- TypeScript compiler completed successfully.
+- PostgreSQL/API suite: 28 passed, 0 failed, 0 skipped.
+- Chromium browser suite: 18 passed with JavaScript disabled; external requests intercepted.
+- The retention case verifies stale planned job expiry, link revocation/removal, encrypted-payload clearing at expiry, nonce cleanup, preservation of an unexpired planned alert/capability, and continued notification-row retention.
+- Browser evidence JSON and screenshots were refreshed by the passing suite.
+- Afterward, ctdmp-worker was restarted and active; `/health/live` returned `{"status":"ok","mode":"MOCK"}` and `/health/ready` returned `{"status":"ready","scope":"database-only"}`.
+- `git diff --check` passed for the final worktree.
+
+Actual check commands (run in `/home/ubuntu/ctdmp-connect`):
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs packages/db/migrate.ts`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/typescript/bin/tsc --noEmit`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs scripts/test.ts`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs scripts/test.ts --browser`
+
+The SSH command environment does not expose a `pnpm` executable. Checks used the Node 24 binary already configured for the application services and the repository-installed TypeScript/tsx entry points. The test runner added the repository's `.bin` directory to PATH for its child process.
+
+Limits: this is a narrow ephemeral-data lifecycle, not PRIV-001 completion. Production retention periods, provider raw-event retention, encryption-key rotation, account export/deletion, backup tombstones, legal holds, and retention for other future data classes remain owner/policy decisions. Production startup remains blocked.

@@ -90,3 +90,12 @@ Actual verification on Lightsail: pnpm check passed TypeScript and 27 PostgreSQL
 Limits: this is a one-off MOCK schedule editor. Real recurrence, the organization-approved schedule/time zone, authoritative channel evidence and live YouTube verification remain unconfigured. It is not a production schedule or launch approval.
 
 Latest code checkpoint: 9b6c428126d41c60a2b96bd6e7da01bdf4da5cb5 was pushed to origin/build/phase-1-browser-slice and verified equal to GitHub's branch ref on 2026-10-26. The implementation worktree was clean immediately after that push.
+
+
+## 27 October checkpoint — ephemeral retention
+
+Migration 010 associates each encrypted notification URL with its digest-only join capability and expiry. The worker sweeps at most 500 records once per minute. It expires pending notices at their usefulness deadline; clears encrypted payloads on the next successful sweep after expiry and revokes their associated capability; deletes consumed/expired nonces; and removes revoked/expired link rows after references clear. Prepared mock alerts retain the encrypted URL through the capability's six-hour lifetime. The cleanup does not touch check-ins, consent, receipts, audit logs, or budget history.
+
+Verification on the VPS: migration applied to development and test databases; TypeScript passed; 28 PostgreSQL/API checks passed with 0 failures or skips; 18 Chromium checks passed with JavaScript disabled. Browser evidence and screenshots were refreshed. Afterward ctdmp-worker restarted active and loopback liveness/readiness returned MOCK/database-ready. The SSH shell lacks a `pnpm` executable, so TypeScript/tsx were invoked through the Node 24 binary used by systemd; the suite itself ran the migration and integration checks. Full output and scope limits: docs/evidence/ephemeral-retention-2026-10-27.txt.
+
+Limits: production retention durations, raw provider-event retention, key rotation, account export/deletion, backup tombstones, and future sensitive-data classes remain unresolved. This local fixture cleanup is not production privacy compliance.

@@ -4,7 +4,7 @@
 2. Implement real WebAuthn/passkeys, verified WhatsApp linking and recovery before any public pilot. Current browser access is operator-issued one-hour fictional sessions only; production startup remains blocked.
 3. Extend the interim server-rendered frontend into the proposed Next.js/Tailwind application while preserving semantic forms and server-enforced authorization. Add replay contracts, full category preferences, pagination, OpenAPI and typed clients.
 4. Implement Meta verification challenge and actual versioned payload contracts following current official documentation. Current signed webhook is explicitly a fictional contract; no account is connected.
-5. Add encrypted payload/nonces retention and key rotation, membership interval rules, richer sensitive-read audit, campaign approval revisions, monotonic receipt processing and OUTCOME_UNKNOWN reconciliation. Mock budget and dedup tests do not establish production send correctness.
+5. A bounded cleanup for encrypted notification payloads and short-lived join capabilities is implemented. Remaining: encryption key rotation, retention periods for each production data class, membership interval rules, richer sensitive-read audit, campaign approval revisions, monotonic receipt processing and OUTCOME_UNKNOWN reconciliation. Mock budget and dedup tests do not establish production send correctness.
 6. Finish first-slice acceptance evidence: deterministic user-operated scenario controls, paused templates/freshness, Redis-loss recovery, scoped moderation and replay boundaries, keyboard/large-text/slow-network accessibility checks, sanitized database/API evidence, restore drill, representative load and dependency/secret scans.
 7. Later content, verified directory, real human handoff, privacy lifecycle and native apps remain unimplemented. No real contacts/channels/schedules/affiliation are assumed.
 
@@ -27,3 +27,6 @@ Next real integration decisions: authoritative channel IDs and schedule; account
 
 
 26 October update: one-off mock session scheduling is implemented with timezone/offset round-trip checks, daylight-saving gap rejection, revision/history/audit, protected no-JavaScript form, and public schedule display. It does not establish the real CTDMP schedule or recurrence. Latest checks: 27/27 integration tests and 18/18 browser checks; see docs/evidence/program-schedule-2026-10-26.txt.
+
+
+27 October update: migration 010 and a bounded worker cleanup now expire stale planned notices, erase encrypted joining payloads on a worker sweep after their usefulness/capability deadline, remove consumed or expired nonces, and delete unreferenced revoked/expired link digests. Actual checks passed: 28/28 PostgreSQL/API and 18/18 Chromium with JavaScript disabled. Evidence: docs/evidence/ephemeral-retention-2026-10-27.txt. This does not select production retention periods or complete data rights, key rotation, or raw provider-event retention.

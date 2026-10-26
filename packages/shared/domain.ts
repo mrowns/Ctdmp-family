@@ -69,8 +69,9 @@ export async function planOne():Promise<boolean> {
     if(!row) continue;
     if(!m.live_start) { await c.query("UPDATE notifications SET state='SUPPRESSED',reason='NO_OPT_IN' WHERE id=$1",[row.id]);continue; }
     const token=randomToken();
-    await c.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()+interval '6 hours',false)",[digest(token),p.organization_id,m.id,p.id]);
-    await c.query('UPDATE notifications SET payload_cipher=$2 WHERE id=$1',[row.id,encrypt(JSON.stringify({path:'/j/'+token,mode:'DRY_RUN'}))]);
+    const tokenDigest=digest(token);
+    const link=(await c.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()+interval '6 hours',false) RETURNING expires_at",[tokenDigest,p.organization_id,m.id,p.id])).rows[0];
+    await c.query('UPDATE notifications SET payload_cipher=$2,join_link_digest=$3,payload_expires_at=$4 WHERE id=$1',[row.id,encrypt(JSON.stringify({path:'/j/'+token,mode:'DRY_RUN'})),tokenDigest,link.expires_at]);
    }
   }
   await c.query('UPDATE domain_outbox SET processed=true WHERE id=$1',[e.id]);return true;
@@ -81,7 +82,10 @@ export async function dispatchOne(id:string):Promise<void> {
   const n=(await c.query('SELECT * FROM notifications WHERE id=$1 FOR UPDATE',[id])).rows[0];
   if(!n || n.state!=='PLANNED') return;
   const pref=(await c.query('SELECT p.*,m.active FROM preferences p JOIN members m ON m.id=p.member_id WHERE p.member_id=$1 FOR UPDATE OF p,m',[n.member_id])).rows[0];
-  const suppress=async(reason:string)=>{await c.query("UPDATE notifications SET state='SUPPRESSED',reason=$2,payload_cipher=null WHERE id=$1",[id,reason]);};
+  const suppress=async(reason:string)=>{
+   if(n.join_link_digest)await c.query('UPDATE join_links SET revoked=true WHERE digest=$1',[n.join_link_digest]);
+   await c.query("UPDATE notifications SET state='SUPPRESSED',reason=$2,payload_cipher=NULL,join_link_digest=NULL,payload_expires_at=NULL WHERE id=$1",[id,reason]);
+  };
   if(!pref?.active || !pref.live_start) return suppress('OPT_OUT_OR_INACTIVE');
   const consent=(await c.query("SELECT opted_in FROM consent_records WHERE member_id=$1 AND purpose='LIVE_START' ORDER BY id DESC LIMIT 1",[n.member_id])).rows[0];
   if(!consent?.opted_in) return suppress('NO_VALID_CONSENT');
@@ -95,6 +99,38 @@ export async function dispatchOne(id:string):Promise<void> {
   if(!budget) return suppress('BUDGET_CAP');
   await c.query('INSERT INTO cost_ledger(notification_id,units) VALUES($1,$2)',[id,n.cost_units]);
   await c.query("UPDATE notifications SET state='DRY_RUN_PREPARED',reason='MOCK_PROVIDER_NO_EXTERNAL_SEND' WHERE id=$1",[id]);
+ });
+}
+export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number}> {
+ if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Retention batch size must be between 1 and 1000');
+ return tx(async c=>{
+  const payloads=(await c.query(`SELECT id,join_link_digest FROM notifications
+   WHERE payload_cipher IS NOT NULL AND ($2::text IS NULL OR organization_id=$2) AND (
+    (state='PLANNED' AND expires_at<=now()) OR
+    (state='DRY_RUN_PREPARED' AND (payload_expires_at IS NULL OR payload_expires_at<=now())) OR
+    state NOT IN ('PLANNED','DRY_RUN_PREPARED')
+   ) ORDER BY COALESCE(payload_expires_at,expires_at),id FOR UPDATE SKIP LOCKED LIMIT $1`,[batchSize,organizationId??null])).rows;
+  const linkedDigests=payloads.map((row:any)=>row.join_link_digest).filter((value:any):value is string=>typeof value==='string');
+  if(linkedDigests.length)await c.query('UPDATE join_links SET revoked=true WHERE digest=ANY($1::text[])',[linkedDigests]);
+  const payloadIds=payloads.map((row:any)=>row.id);
+  if(payloadIds.length)await c.query('UPDATE notifications SET payload_cipher=NULL,join_link_digest=NULL,payload_expires_at=NULL WHERE id=ANY($1::bigint[])',[payloadIds]);
+  const expired=(await c.query(`WITH candidates AS (
+   SELECT id FROM notifications WHERE state='PLANNED' AND expires_at<=now() AND ($2::text IS NULL OR organization_id=$2)
+   ORDER BY expires_at,id FOR UPDATE SKIP LOCKED LIMIT $1
+  ) UPDATE notifications n SET state='EXPIRED',reason='USEFULNESS_DEADLINE_PASSED'
+   FROM candidates c WHERE n.id=c.id RETURNING n.id`,[batchSize,organizationId??null])).rows;
+  const nonces=(await c.query(`WITH candidates AS (
+   SELECT n.digest FROM join_nonces n WHERE (n.consumed OR n.expires_at<=now())
+    AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM join_links j WHERE j.digest=n.token_digest AND j.organization_id=$2))
+   ORDER BY n.expires_at,n.digest FOR UPDATE SKIP LOCKED LIMIT $1
+  ) DELETE FROM join_nonces n USING candidates c WHERE n.digest=c.digest RETURNING n.digest`,[batchSize,organizationId??null])).rows;
+  const links=(await c.query(`WITH candidates AS (
+   SELECT j.digest FROM join_links j WHERE (j.revoked OR j.expires_at<=now()) AND ($2::text IS NULL OR j.organization_id=$2)
+    AND NOT EXISTS(SELECT 1 FROM join_nonces n WHERE n.token_digest=j.digest)
+    AND NOT EXISTS(SELECT 1 FROM notifications x WHERE x.join_link_digest=j.digest)
+   ORDER BY j.expires_at,j.digest FOR UPDATE SKIP LOCKED LIMIT $1
+  ) DELETE FROM join_links j USING candidates c WHERE j.digest=c.digest RETURNING j.digest`,[batchSize,organizationId??null])).rows;
+  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length};
  });
 }
 export async function setOptIn(member:string,value:boolean) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID, createHmac } from 'node:crypto';
 import { pool, tx } from '../packages/db/index.ts';
 import { app } from '../apps/api/src/app.ts';
-import { observeOne,planOne,dispatchOne,mintNonce,confirmJoin,setOptIn,processWebhookOne,reconcileReceiptOne } from '../packages/shared/domain.ts';
+import { observeOne,planOne,dispatchOne,mintNonce,confirmJoin,setOptIn,processWebhookOne,reconcileReceiptOne,cleanupEphemeralData } from '../packages/shared/domain.ts';
 import { randomToken,digest,decrypt } from '../packages/integrations/crypto.ts';
 import { createScenario, queueScenarioObservation } from '../packages/shared/demo-scenarios.ts';
 import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../packages/shared/administration.ts';
@@ -246,6 +246,34 @@ async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
 }
 const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+test('PRIV-001: bounded retention clears stale encrypted payloads and expired capabilities only',async()=>{
+ const f=await fixture();await f.observe();
+ await pool.query('UPDATE preferences SET live_start=true WHERE member_id IN (SELECT id FROM members WHERE organization_id=$1)',[f.org]);
+ await pool.query("INSERT INTO consent_records(member_id,purpose,opted_in,wording_version) SELECT id,'LIVE_START',true,'retention-test-v1' FROM members WHERE organization_id=$1",[f.org]);
+ while(await planOne()){}
+ const rows=(await pool.query('SELECT id,state,payload_cipher,join_link_digest,payload_expires_at FROM notifications WHERE program_id=$1 AND payload_cipher IS NOT NULL ORDER BY id',[f.program])).rows;
+ assert.equal(rows.length,5);
+ const stale=rows[0],prepared=rows[1],current=rows[2];
+ await pool.query("UPDATE notifications SET expires_at=now()-interval '1 second' WHERE id=$1",[stale.id]);
+ await dispatchOne(prepared.id);
+ await pool.query("UPDATE notifications SET payload_expires_at=now()-interval '1 second' WHERE id=$1",[prepared.id]);
+ await pool.query("UPDATE join_links SET expires_at=now()-interval '1 second' WHERE digest=$1",[prepared.join_link_digest]);
+ const activeNonce=digest(randomToken()),expiredNonce=digest(randomToken()),consumedNonce=digest(randomToken()),browser=digest(randomToken());
+ await pool.query("INSERT INTO join_nonces(digest,token_digest,browser_digest,expires_at,consumed) VALUES($1,$4,$5,now()-interval '1 second',false),($2,$4,$5,now()+interval '1 hour',true),($3,$4,$5,now()+interval '1 hour',false)",[expiredNonce,consumedNonce,activeNonce,current.join_link_digest,browser]);
+ const extraExpiredLink=digest(randomToken());
+ await pool.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()-interval '1 second',false)",[extraExpiredLink,f.org,f.m,f.program]);
+ const result=await cleanupEphemeralData(20,f.org);
+ assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3});
+ const after=(await pool.query('SELECT id,state,payload_cipher,join_link_digest FROM notifications WHERE id=ANY($1::bigint[])',[[stale.id,prepared.id,current.id]])).rows;
+ const staleAfter=after.find((row:any)=>row.id===stale.id);const preparedAfter=after.find((row:any)=>row.id===prepared.id);const currentAfter=after.find((row:any)=>row.id===current.id);
+ assert.equal(staleAfter?.state,'EXPIRED');assert.equal(staleAfter?.payload_cipher,null);assert.equal(staleAfter?.join_link_digest,null);
+ assert.equal(preparedAfter?.state,'DRY_RUN_PREPARED');assert.equal(preparedAfter?.payload_cipher,null);
+ assert.equal(currentAfter?.state,'PLANNED');assert.ok(currentAfter?.payload_cipher);assert.equal(currentAfter?.join_link_digest,current.join_link_digest);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM join_nonces WHERE digest=$1',[activeNonce])).rows[0].n,1);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM join_links WHERE digest=$1',[current.join_link_digest])).rows[0].n,1);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM notifications WHERE program_id=$1',[f.program])).rows[0].n,5);
+ await assert.rejects(cleanupEphemeralData(1001),/batch size/);
+});
 test('ADMIN: one-off schedule is timezone-checked, revisioned, and available through a protected browser form',async()=>{
  const f=await fixture();const actor=await administrator(f);const path='/api/v1/admin/programs/'+f.program+'/schedule';
  const next=await server.inject({url:'/api/v1/public/programs/next'});
