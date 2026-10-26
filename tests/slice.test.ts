@@ -110,9 +110,28 @@ test('T-MSG-09: concurrent dispatch cannot exceed remaining budget',async()=>{
  const rows=(await pool.query('SELECT state,reason FROM notifications WHERE program_id=$1',[f.program])).rows;
  assert.equal(rows.filter(n=>n.state==='DRY_RUN_PREPARED').length,1);assert.equal(rows.filter(n=>n.reason==='BUDGET_CAP').length,1);
 });
-test('T-LIVE-02/04/06: wrong source, upcoming video, provider outage never confirm live',async()=>{
- const f=await fixture();await f.observe('MockVideo_A',true,undefined,false,'unapproved');await f.observe('MockVideo_A',false);await f.observe('MockVideo_A',true,undefined,true);
+test('T-LIVE-02/04/06: wrong source and provider outage never confirm live; health is durable and freshness-aware',async()=>{
+ const f=await fixture();
+ await pool.query("INSERT INTO grants(member_id,permission,branch_id) VALUES($1,'program.read',NULL)",[f.admin]);
+ const empty=await server.inject({url:'/api/v1/admin/providers/health',headers:auth(f.admin)});
+ assert.equal(empty.statusCode,200);assert.equal(empty.json().unknownWhenEmpty,true);assert.equal(empty.json().items.length,0);
+ assert.equal((await server.inject({url:'/api/v1/admin/providers/health',headers:auth(f.m)})).statusCode,403);
+ await f.observe('MockVideo_A',true,undefined,false,'unapproved');await f.observe('MockVideo_A',false);await f.observe('MockVideo_A',true,undefined,true);
  const p=(await pool.query('SELECT * FROM programs WHERE id=$1',[f.program])).rows[0];assert.equal(p.state,'SCHEDULED');assert.equal(p.current_sequence,null);
+ let health=(await pool.query("SELECT * FROM provider_health WHERE organization_id=$1 AND provider_key='youtube'",[f.org])).rows[0];
+ assert.equal(health.status,'DEGRADED');assert.equal(health.consecutive_failures,1);assert.ok(health.last_success_at);assert.ok(health.last_failure_at);
+ let response=await server.inject({url:'/api/v1/admin/providers/health',headers:auth(f.admin)});
+ assert.equal(response.json().items[0].freshness,'FRESH');assert.equal(response.json().items[0].status,'DEGRADED');
+ await f.observe('MockVideo_A',true);
+ health=(await pool.query("SELECT * FROM provider_health WHERE organization_id=$1 AND provider_key='youtube'",[f.org])).rows[0];
+ assert.equal(health.status,'HEALTHY');assert.equal(health.consecutive_failures,0);assert.ok(health.last_failure_at);
+ await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,provider_error,observed_at,expected_revision) SELECT id,'MockVideo_C',$2,'CTDMP stale outage',true,true,now()-interval '5 minutes',revision FROM programs WHERE id=$1",[f.program,f.channel]);
+ await observeOne();
+ health=(await pool.query("SELECT * FROM provider_health WHERE organization_id=$1 AND provider_key='youtube'",[f.org])).rows[0];
+ assert.equal(health.status,'HEALTHY');assert.equal(health.consecutive_failures,0);
+ await pool.query("UPDATE provider_health SET last_attempt_at=now()-interval '3 minutes' WHERE organization_id=$1 AND provider_key='youtube'",[f.org]);
+ response=await server.inject({url:'/api/v1/admin/providers/health',headers:auth(f.admin)});
+ assert.equal(response.json().items[0].freshness,'STALE');assert.equal(response.json().items[0].status,'HEALTHY');
 });
 test('T-LIVE-05: competing streams require review without notification',async()=>{
  const f=await fixture();

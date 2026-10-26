@@ -11,6 +11,10 @@ export async function observeOne():Promise<boolean> {
   const p=(await c.query('SELECT * FROM programs WHERE id=$1 FOR UPDATE',[candidate.program_id])).rows[0];
   const o=(await c.query('SELECT * FROM mock_observations WHERE id=$1 AND NOT processed FOR UPDATE',[candidate.id])).rows[0];
   if(!o)return true;
+  await c.query(
+   "INSERT INTO provider_health(organization_id,provider_key,operation,status,last_attempt_at,last_success_at,last_failure_at,last_error_code,consecutive_failures) VALUES($1,'youtube','stream_observation',$2,$3::timestamptz,CASE WHEN $2='HEALTHY' THEN $3::timestamptz ELSE NULL END,CASE WHEN $2='DEGRADED' THEN $3::timestamptz ELSE NULL END,CASE WHEN $2='DEGRADED' THEN 'PROVIDER_ERROR' ELSE NULL END,CASE WHEN $2='DEGRADED' THEN 1 ELSE 0 END) ON CONFLICT(organization_id,provider_key,operation) DO UPDATE SET status=EXCLUDED.status,last_attempt_at=EXCLUDED.last_attempt_at,last_success_at=CASE WHEN EXCLUDED.status='HEALTHY' THEN EXCLUDED.last_attempt_at ELSE provider_health.last_success_at END,last_failure_at=CASE WHEN EXCLUDED.status='DEGRADED' THEN EXCLUDED.last_attempt_at ELSE provider_health.last_failure_at END,last_error_code=EXCLUDED.last_error_code,consecutive_failures=CASE WHEN EXCLUDED.status='DEGRADED' THEN provider_health.consecutive_failures+1 ELSE 0 END,revision=provider_health.revision+1,updated_at=now() WHERE EXCLUDED.last_attempt_at>=provider_health.last_attempt_at",
+   [p.organization_id,o.provider_error?'DEGRADED':'HEALTHY',o.observed_at]
+  );
   let outcome='IGNORED';
   const finish=async()=>{await c.query('UPDATE mock_observations SET processed=true,outcome=$2 WHERE id=$1',[o.id,outcome]);return true;};
   if(p.state==='COMPLETED') {outcome='SESSION_COMPLETED';return finish();}

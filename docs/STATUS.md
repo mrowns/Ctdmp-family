@@ -16,7 +16,7 @@ Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT. Stor
 
 Material gaps: interim frontend is Fastify-served HTML, not the proposed Next.js/Tailwind application (ADR-009). Control room has no candidate-management commands yet. No production authentication/recovery, actual Meta envelope/verification challenge, real source registry, physical-device evidence, native build, backup restore, complete permissions/privacy lifecycle, or launch approval. Browser screenshots at a mobile viewport do not prove device behavior or WCAG compliance. See NEXT_STEPS.md.
 
-Repository synchronization: push of the build branch was attempted and failed because the VPS has no GitHub HTTPS authentication (`could not read Username`; terminal prompts disabled). All commits and evidence remain safely on the VPS. No remote branch or GitHub CI run was created. Configure repository-scoped GitHub authentication on the VPS through an approved credential mechanism; never paste a token into chat. Then run `git push -u origin build/phase-1-browser-slice` from the repository.
+Historical note: the push failed before VPS GitHub CLI authentication was completed. This was resolved at the later checkpoint below; origin now tracks the pushed build branch.
 
 ## 26 October continuation
 
@@ -36,8 +36,21 @@ Migrations 003–005 were applied to development and isolated test databases. Ac
 
 Runtime remains API and worker systemd services on VPS loopback only. Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT. Passkeys/storage/maps/push/native apps are unavailable. No real member data, real messages or provider charges were introduced. Complete manual run/view procedure and route contracts: README.md and docs/ADMINISTRATION.md.
 
-GitHub synchronization is still blocked. The connected account reports repository push access, but the connected app's contents-write endpoint returned provider 403. The VPS did not have GitHub CLI credentials. gh 2.45.0 was installed on the VPS; two browser-device flows expired without a recorded CLI login. No token/password was requested in chat or committed. To avoid another stale chat code, complete gh auth login --hostname github.com --git-protocol https --web --scopes repo,workflow directly in Lightsail browser SSH, then verify gh api user --jq .login. The workflow scope is required to upload the repository's .github/workflows/ci.yml. Authenticate the intended account with repository write access. Afterwards run gh auth setup-git and git push -u origin build/phase-1-browser-slice. Never print or paste a token. No GitHub CI run or remote push is claimed.
+Historical note for this checkpoint: GitHub CLI authentication had not yet been completed and no push was claimed at that time. Authentication and push were later completed; see the current checkpoint below.
 
 Next build work: real passkey/recovery and administrator assurance; actual Meta verification/payload contracts and reconciliation; provider health/freshness; schedule/channel governance; privacy retention and rights; remaining acceptance/load/restore/accessibility evidence; Next.js and later product phases. Owner approval is still required before any real broadcast, spending or public deployment.
 
 26 October final source checkpoint: 413ca32 (audited program administration and interactive recovery demo). A normal push of build/phase-1-browser-slice was attempted after the commit and failed with "could not read Username for https://github.com" because no CLI authentication was saved. The working tree is checkpointed on the VPS; no remote push is claimed. Final browser run passed all 18 checks after selected-session prioritization and current-source review UI fixes. The API/worker were restarted from this source and loopback liveness was rechecked.
+
+
+## 26 October checkpoint — GitHub sync and provider health
+
+Current branch build/phase-1-browser-slice is pushed to origin; VPS and remote branch agree at ee1ce30ddbbe919e32de053de79f2ebafdfdc9bd. GitHub CLI identity used was Jennycruzy. The previous authentication blocker is resolved.
+
+Implemented and migrated 006_provider_health.sql. Worker observation handling now keeps a durable per-organization YouTube observation status, success/failure timestamps, safe error code, consecutive-failure count and revision. Results older than the recorded attempt cannot downgrade it. The control room shows unknown/healthy/degraded plus two-minute evidence freshness; /api/v1/admin/providers/health requires a global program.read grant. Provider health is explicitly separate from program-live state and currently describes only MOCK observation fixtures.
+
+Actual verification on the Lightsail development host: pnpm check passed TypeScript and 25 PostgreSQL/API integration tests (25 passed, 0 failed, 0 skipped). The targeted provider-health case covers unknown state, grant denial, degraded then healthy recovery, out-of-order failure rejection and stale status. pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. The versioned migration was applied to development and test databases. After service restart, both ctdmp-api and ctdmp-worker were active; /health/live returned {"status":"ok","mode":"MOCK"} and /health/ready returned {"status":"ready","scope":"database-only"}. The immediate post-restart probe raced startup and failed once; the follow-up probes passed.
+
+During implementation, an initial integration run found a PostgreSQL timestamp parameter inference error; a later test edit caused a duplicate fixture grant. Both were corrected. The final complete pnpm check and browser run passed. Detailed evidence: docs/evidence/provider-health-2026-10-26.txt and updated browser screenshots/JSON.
+
+Provider modes remain YouTube MOCK, WhatsApp MOCK/DRY_RUN, webhook MOCK_CONTRACT. No credentials, real member data, external messages, provider charges or public deployment were used. Production identity, real Meta payload handling, schedule/source governance, receipt reconciliation, privacy retention and other product phases remain incomplete. Full Phase 1 acceptance has not passed.

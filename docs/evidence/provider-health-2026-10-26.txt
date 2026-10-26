@@ -1,0 +1,26 @@
+CTDMP Connect provider-health checkpoint
+Date: 2026-10-26
+Host: Lightsail development VPS; repository /home/ubuntu/ctdmp-connect
+Branch before this checkpoint commit: build/phase-1-browser-slice
+Provider modes: YouTube MOCK; WhatsApp MOCK/DRY_RUN; webhook MOCK_CONTRACT
+
+Migration:
+- pnpm db:migrate applied 006_provider_health.sql to development.
+- pnpm check test setup applied it to isolated ctdmp_test.
+
+Final checks:
+- pnpm check: TypeScript passed; PostgreSQL/API integration suite 25 passed, 0 failed, 0 skipped.
+- Provider-health integration case covers unknown state, access denial without global program.read, degraded and healthy transitions, retained last failure, ignored out-of-order failure, and stale freshness.
+- pnpm test:browser: all 18 Chromium checks passed with JavaScript disabled and external requests intercepted.
+- ctdmp-api and ctdmp-worker: active after restart.
+- /health/live: {"status":"ok","mode":"MOCK"}
+- /health/ready: {"status":"ready","scope":"database-only"}
+
+Implementation iteration notes:
+- An initial full suite exposed an ambiguous PostgreSQL timestamp parameter; explicit timestamptz casts fixed it.
+- A later suite exposed a duplicate fixture grant introduced while adding health authorization coverage; the grant was narrowed to the single test.
+- Final complete checks above passed after both corrections.
+
+Limits:
+- Health reflects mock stream-observation fixtures only and does not prove YouTube connectivity or livestream status.
+- No real member data, Meta send, external charge, or public deployment.

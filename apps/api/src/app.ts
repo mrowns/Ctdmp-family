@@ -51,6 +51,16 @@ export async function app() {
   const result=await confirmJoin(token,nonce,req.cookies.join_browser??'',actor?.id);
   return reply.code(303).header('Location',result.location).send();
  });
+ a.get('/api/v1/admin/providers/health',async req=>{
+  const actor=await principal(req);
+  if(!(await pool.query("SELECT 1 FROM grants WHERE member_id=$1 AND permission='program.read' AND branch_id IS NULL",[actor.id])).rowCount)throw new DomainError('PERMISSION_DENIED',403);
+  const row=(await pool.query("SELECT * FROM provider_health WHERE organization_id=$1 ORDER BY provider_key,operation",[actor.organization_id])).rows;
+  const items=row.map((h:any)=>{
+   const ageSeconds=Math.floor((Date.now()-new Date(h.last_attempt_at).getTime())/1000);
+   return {provider:h.provider_key,operation:h.operation,status:h.status,freshness:ageSeconds>=0&&ageSeconds<=120?'FRESH':'STALE',lastAttemptAt:h.last_attempt_at,lastSuccessAt:h.last_success_at,lastFailureAt:h.last_failure_at,lastErrorCode:h.last_error_code,consecutiveFailures:h.consecutive_failures,revision:h.revision};
+  });
+  return {mode:'MOCK',unknownWhenEmpty:true,evidenceFreshnessSeconds:120,items};
+ });
  a.get('/api/v1/me/checkins',async req=>{
   const m=await principal(req);
   return {mode:'MOCK',items:(await pool.query('SELECT program_id,action,first_opened_at,last_opened_at,assurance,stream_sequence,last_stream_sequence FROM checkin_events WHERE member_id=$1 AND organization_id=$2 ORDER BY first_opened_at DESC LIMIT 50',[m.id,m.organization_id])).rows};
