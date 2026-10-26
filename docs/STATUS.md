@@ -72,3 +72,8 @@ Added migration 008_delivery_receipts.sql. Signed MOCK_CONTRACT webhook events a
 Actual verification on Lightsail: pnpm check passed TypeScript and 26 PostgreSQL/API integration tests (26 passed, 0 failed, 0 skipped). The receipt case covers signature rejection, durable duplicate acceptance, unmatched persistence, later matching, monotonic delayed status, read observations, failed events, scoped access, audit, and control-room display. pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. Migration 008 was applied to development and test databases. The API and worker were restarted; both are active, /health/live reports MOCK, and /health/ready reports database readiness. Evidence: docs/evidence/delivery-reconciliation-2026-10-26.txt.
 
 The earlier final test run found a fixed test-fixture collision from a globally reused mock channel ID; the fixture now uses an organization-specific ID. The final complete checks passed. Remaining: actual Meta account mapping/payload contract, provider send and ambiguous-outcome reconciliation, rate-card reconciliation, privacy retention, schedule governance, and launch-ready authentication. Full Phase 1 acceptance has not passed.
+
+
+## Current repository checkpoint — 26 October 2026
+
+Latest implementation commit 675603464fc483a3fabbb50a2a8511cde3a3f3da is pushed to origin/build/phase-1-browser-slice and matches the VPS HEAD. Working tree was clean after push. The earlier hash ee1ce30ddbbe919e32de053de79f2ebafdfdc9bd in the provider-health subsection was the state at that earlier checkpoint; later source-governance and delivery-reconciliation commits are recorded below it.
