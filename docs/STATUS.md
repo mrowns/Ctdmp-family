@@ -76,7 +76,7 @@ The earlier final test run found a fixed test-fixture collision from a globally 
 
 ## Current repository checkpoint — 26 October 2026
 
-Latest implementation commit 675603464fc483a3fabbb50a2a8511cde3a3f3da is pushed to origin/build/phase-1-browser-slice and matches the VPS HEAD. Working tree was clean after push. The earlier hash ee1ce30ddbbe919e32de053de79f2ebafdfdc9bd in the provider-health subsection was the state at that earlier checkpoint; later source-governance and delivery-reconciliation commits are recorded below it.
+The implementation checkpoint at 675603464fc483a3fabbb50a2a8511cde3a3f3da was the repository state before schedule editing. The subsequent source-governance and delivery-reconciliation checkpoints are recorded below; the latest one-off-schedule implementation commit and push are recorded in the schedule section.
 
 
 ## 26 October checkpoint — one-off mock scheduling
@@ -88,3 +88,5 @@ A CSRF helper issue surfaced while testing the multi-form schedule control room:
 Actual verification on Lightsail: pnpm check passed TypeScript and 27 PostgreSQL/API integration tests (27 passed, 0 failed, 0 skipped); pnpm test:browser passed all 18 Chromium checks with JavaScript disabled. The schedule test covers offset/time-zone mismatch, invalid zones, a nonexistent daylight-saving time, protected form submission, audit/history, stale revisions and rescheduling. Migration 009 is applied to development and test databases. The services restarted and returned active MOCK/database-ready health. Evidence: docs/evidence/program-schedule-2026-10-26.txt.
 
 Limits: this is a one-off MOCK schedule editor. Real recurrence, the organization-approved schedule/time zone, authoritative channel evidence and live YouTube verification remain unconfigured. It is not a production schedule or launch approval.
+
+Latest code checkpoint: 9b6c428126d41c60a2b96bd6e7da01bdf4da5cb5 was pushed to origin/build/phase-1-browser-slice and verified equal to GitHub's branch ref on 2026-10-26. The implementation worktree was clean immediately after that push.
