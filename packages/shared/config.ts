@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { z } from 'zod';
 const schema = z.object({
+ ORGANIZATION_ID: z.string().min(1).default('demo-org'),
  APP_ENV: z.enum(['local','test','staging','production']),
  PROVIDER_MODE: z.literal('mock'),
  OUTBOUND_ENABLED: z.literal('false'),

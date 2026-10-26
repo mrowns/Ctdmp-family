@@ -13,6 +13,8 @@ try { await tx(async c=>{
  await c.query("INSERT INTO grants VALUES ('admin-a','engagement.read','branch-a'),('admin-b','engagement.read','branch-b'),('moderator','content.moderate','branch-a') ON CONFLICT DO NOTHING");
  await c.query("INSERT INTO grants VALUES ('admin-a','program.read',null),('admin-b','program.read',null),('admin-a','messaging.read',null) ON CONFLICT DO NOTHING");
  await c.query("INSERT INTO programs(id,organization_id,title,local_date) VALUES ('demo-session','demo-org','CTDMP — SIMULATED SESSION',CURRENT_DATE) ON CONFLICT DO NOTHING");
+ await c.query("INSERT INTO program_selections VALUES ('demo-org','demo-session',0) ON CONFLICT DO NOTHING");
+ await c.query("INSERT INTO grants VALUES ('admin-a','program.manage',null),('admin-a','messaging.manage',null),('admin-a','demo.manage',null) ON CONFLICT DO NOTHING");
  await c.query("INSERT INTO official_channels VALUES ('mock-approved','demo-org','demo-session',true,true) ON CONFLICT DO NOTHING");
  await c.query("INSERT INTO sending_controls VALUES ('demo-org',true) ON CONFLICT DO NOTHING");
  await c.query("INSERT INTO budgets VALUES ('demo-org','TEST',100,0) ON CONFLICT DO NOTHING");

@@ -43,7 +43,8 @@ The API now serves a responsive, server-rendered frontend without JavaScript:
 
 - `/` and `/live`: truthful current program and deliberate generic joining.
 - `/account`, `/account/history`, `/account/preferences`: private fictional member pages.
-- `/admin`: permission-checked control room, branch-scoped link openings, stream decision history and separately granted simulated budget information.
+- `/admin`: permission-checked control room, candidate decisions, explicit Home-session selection, completion, simulated sending controls, branch-scoped link openings and transition evidence.
+- `/account/alerts`: own prepared dry-run alerts and their private personal joining pages.
 - `/demo/sign-in`: protected development access-code form. This is not public-pilot authentication.
 
 To issue a one-hour code on the VPS (never paste the code into chat):
@@ -61,7 +62,7 @@ Use `admin-a` instead of `alice` for the explicitly granted fictional control-ro
 ssh -i ~/Downloads/LightsailDefaultKey-eu-central-1.pem -N -L 3100:127.0.0.1:3100 ubuntu@3.73.141.132
 ```
 
-Then visit `http://127.0.0.1:3100`. Browser form origins must use that port. Fixture streams use invalid/mock YouTube IDs and are not real broadcasts.
+Then visit `http://127.0.0.1:3100`. Browser form origins must use that port. Fixture streams open local `/demo/streams/MockVideo_A` and `/demo/streams/MockVideo_B` pages. They show the selected mock destination without calling YouTube or playing a real broadcast.
 
 For browser verification on the VPS:
 
@@ -73,3 +74,11 @@ pnpm test:browser
 The browser suite uses a separate test database and worker, disables JavaScript, intercepts all external browser requests, and saves sanitized screenshots and assertions under `docs/evidence/`. It preserves fictional test history rather than resetting the demo database. It is a Chromium desktop-engine test with a mobile viewport, not physical-device validation.
 
 Native directories remain placeholders. The full Next.js frontend, real authentication and later product phases are incomplete. See docs/STATUS.md and docs/NEXT_STEPS.md.
+
+## Interactive recovery demonstration
+
+See `docs/ADMINISTRATION.md` for the complete browser procedure and command contracts. On the VPS, issue separate fictional access codes for `admin-a` and `alice`, then use separate browser profiles. Enable Alice's simulated live-start preference. Sign in again as admin-a before changes; administrative verification lasts 15 minutes.
+
+In the control room, create and show a fictional session, simulate Stream A starting, and refresh until verified. Alice's prepared alert appears at `/account/alerts`. Opening its landing page creates no check-in; Watch Live opens the local Stream A page. Queue the interruption and replacement B from the control room. Reopen the same personal link and choose Watch Live: it opens local Stream B and preserves one unique action. Prior sessions and their history are preserved.
+
+Production startup and real providers remain blocked. Fixture identity does not establish production authentication.

@@ -11,3 +11,23 @@ Install development process units from infra with owner-authorized sudo; inspect
 Rollback: stop services, preserve database/volumes and uncommitted code; use a compatible previously verified artifact. Do not delete volumes or force destructive rollback to recover software. No production backup, off-host copy, restore test, HTTPS/domain, reverse proxy, alerting, deployment pipeline or service-level guarantee exists yet.
 
 Required runbooks before launch: wrong stream/interruption/quota outage; Meta auth/templates/webhooks; budget cap/ambiguous send; leaked token/admin compromise/media exposure; DB outage/restore/deletion tombstones and failed deployment. RPO/RTO and accountable operators remain owner decisions.
+
+## Source synchronization (26 October)
+
+The build lives on the VPS in /home/ubuntu/ctdmp-connect on build/phase-1-browser-slice. Repository collaborator permission does not authenticate Git CLI or change the connected GitHub app's OAuth scopes. No complete VPS CLI login has been recorded yet.
+
+In Lightsail browser SSH, run:
+
+```bash
+gh auth login --hostname github.com --git-protocol https --web --scopes repo,workflow
+```
+
+Complete the current device flow promptly in the intended repository-authorized GitHub account. Copy its device code, press Enter in the terminal so polling starts, and use https://github.com/login/device if no browser is available on the server. Verify identity with gh api user --jq .login; do not print the token. Then:
+
+```bash
+cd /home/ubuntu/ctdmp-connect
+gh auth setup-git
+git push -u origin build/phase-1-browser-slice
+```
+
+Use a normal fast-forward push and verify the remote commit SHA. Do not force-push or replace unrelated repository history. A code push does not deploy the application or enable real providers. Deployment is still separately approval-gated.

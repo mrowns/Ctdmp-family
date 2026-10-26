@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-25T15:09:32.703Z",
+  "recordedAt": "2026-10-26T06:32:23.927Z",
   "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; JavaScript disabled",
   "providerModes": {
     "youtube": "MOCK",
@@ -16,6 +16,12 @@
     "Anonymous generic joining creates no member action",
     "Authenticated generic joining preserves one unique member action",
     "Scoped admin sees permitted member and immutable stream history",
+    "Recently signed-in administrator approves competing evidence through a protected form",
+    "Explicit administrator selection determines the session shown on Home",
+    "Protected pause and resume forms persist the simulated sending switch",
+    "Completion removes the live action; a stale browser form shows a useful conflict",
+    "Control-room scenario creation and member-owned prepared alert complete the start journey without database commands",
+    "Interactive interruption and replacement controls recover the same personal link without another unique action",
     "Other branch administrator receives no member rows from branch A",
     "Other member and moderator cannot open admin control room; own history stays private",
     "Worker restart and repeated source evidence preserve notification and action uniqueness"
@@ -23,7 +29,9 @@
   "screenshots": [
     "mobile-home.png",
     "mobile-history.png",
-    "control-room.png"
+    "control-room.png",
+    "admin-completed.png",
+    "interactive-scenario.png"
   ],
   "limitations": [
     "No real providers or public deployment",

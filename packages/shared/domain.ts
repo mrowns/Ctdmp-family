@@ -1,36 +1,51 @@
+import { mockStreamDestination } from '../integrations/destinations.ts';
+import { recordTransition } from './programs.ts';
 import { pool, tx } from '../db/index.ts';
 import { randomToken, digest, encrypt } from '../integrations/crypto.ts';
 export class DomainError extends Error { constructor(public code:string, public status=409) { super(code); } }
 export async function observeOne():Promise<boolean> {
  return tx(async c=>{
-  const observation=(await c.query('SELECT * FROM mock_observations WHERE NOT processed ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1')).rows[0];
-  if(!observation) return false;
-  const o=observation;
-  const p=(await c.query('SELECT * FROM programs WHERE id=$1 FOR UPDATE',[o.program_id])).rows[0];
+  const candidate=(await c.query('SELECT id,program_id FROM mock_observations WHERE NOT processed ORDER BY id LIMIT 1')).rows[0];
+  if(!candidate) return false;
+  // Program first: the same lock order as administrator decisions prevents deadlocks.
+  const p=(await c.query('SELECT * FROM programs WHERE id=$1 FOR UPDATE',[candidate.program_id])).rows[0];
+  const o=(await c.query('SELECT * FROM mock_observations WHERE id=$1 AND NOT processed FOR UPDATE',[candidate.id])).rows[0];
+  if(!o)return true;
   let outcome='IGNORED';
   const finish=async()=>{await c.query('UPDATE mock_observations SET processed=true,outcome=$2 WHERE id=$1',[o.id,outcome]);return true;};
+  if(p.state==='COMPLETED') {outcome='SESSION_COMPLETED';return finish();}
   if(o.provider_error) { outcome='PROVIDER_DEGRADED'; return finish(); }
   if(o.expected_revision!==p.revision) { outcome='STALE_REVISION'; return finish(); }
   if(Date.now()-new Date(o.observed_at).getTime()>120000 || new Date(o.observed_at).getTime()>Date.now()+5000) { outcome='STALE_EVIDENCE'; return finish(); }
-  const approved=(await c.query('SELECT 1 FROM official_channels WHERE id=$1 AND program_id=$2 AND organization_id=$3 AND approved AND mock',[o.channel_id,p.id,p.organization_id])).rowCount;
+  const approved=(await c.query('SELECT 1 FROM official_channels WHERE id=$1 AND program_id=$2 AND organization_id=$3 AND approved AND mock FOR SHARE',[o.channel_id,p.id,p.organization_id])).rowCount;
   if(!approved || !/ctdmp/i.test(o.title) || !/^[A-Za-z0-9_-]{11}$/.test(o.video_id)) { outcome='REJECTED_SOURCE_OR_MATCH'; return finish(); }
+  const decision=(await c.query('SELECT decision FROM candidate_decisions WHERE program_id=$1 AND video_id=$2 ORDER BY id DESC LIMIT 1',[p.id,o.video_id])).rows[0];
+  if(decision?.decision==='REJECTED') {outcome='REJECTED_BY_ADMIN';return finish();}
   const current=p.current_sequence ? (await c.query('SELECT * FROM stream_versions WHERE program_id=$1 AND sequence=$2',[p.id,p.current_sequence])).rows[0] : null;
   if(!o.live || !o.available) {
    if(current?.video_id===o.video_id && p.state==='LIVE_CONFIRMED') {
     await c.query("UPDATE programs SET state='SUSPECTED_INTERRUPTION',revision=revision+1 WHERE id=$1",[p.id]);
     await c.query("INSERT INTO domain_outbox(event_key,program_id,event_type,revision) VALUES($1,$2,'program.interruption_suspected',$3) ON CONFLICT DO NOTHING",[p.id+':interruption:'+(p.revision+1),p.id,p.revision+1]);
+    await recordTransition(c,p,'SUSPECTED_INTERRUPTION','Observed mock interruption',null,o.id,{videoId:o.video_id,available:o.available,live:o.live});
     outcome='INTERRUPTION_SUSPECTED';
    } else outcome='NOT_LIVE';
    return finish();
   }
   if(current?.video_id===o.video_id && p.state==='LIVE_CONFIRMED') { outcome='ALREADY_CURRENT';return finish(); }
+  if(current?.video_id===o.video_id && ['SUSPECTED_INTERRUPTION','RECOVERY_SEARCH'].includes(p.state)) {
+   await c.query("UPDATE programs SET state='LIVE_CONFIRMED',revision=revision+1 WHERE id=$1",[p.id]);
+   await recordTransition(c,p,'LIVE_CONFIRMED','Existing mock source recovered',null,o.id,{videoId:o.video_id});
+   await c.query("INSERT INTO domain_outbox(event_key,program_id,event_type,revision) VALUES($1,$2,'program.recovered',$3) ON CONFLICT DO NOTHING",[p.id+':recovered:'+(p.revision+1),p.id,p.revision+1]);
+   outcome='RECOVERED';return finish();
+  }
   const competing=(await c.query(`SELECT 1 FROM mock_observations WHERE program_id=$1 AND NOT processed AND live AND available AND NOT provider_error AND expected_revision=$2 AND video_id<>$3 AND observed_at>now()-interval '2 minutes' LIMIT 1`,[p.id,p.revision,o.video_id])).rowCount;
   if(competing || (current && p.state==='LIVE_CONFIRMED') || p.state==='AWAITING_ADMIN' || p.state==='COMPLETED') {
-   await c.query("UPDATE programs SET state='AWAITING_ADMIN',revision=revision+1 WHERE id=$1",[p.id]);outcome='REVIEW_REQUIRED';return finish();
+   await c.query("UPDATE programs SET state='AWAITING_ADMIN',revision=revision+1 WHERE id=$1",[p.id]);await recordTransition(c,p,'AWAITING_ADMIN','Competing mock source evidence',null,o.id,{videoId:o.video_id});outcome='REVIEW_REQUIRED';return finish();
   }
   const sequence=(p.current_sequence??0)+1;
   await c.query('INSERT INTO stream_versions VALUES($1,$2,$3,$4,$5,$6)',[p.id,sequence,o.video_id,o.channel_id,o.observed_at,current?'Verified mock continuation':'Verified mock initial source']);
   await c.query("UPDATE programs SET state='LIVE_CONFIRMED',revision=revision+1,current_sequence=$2 WHERE id=$1",[p.id,sequence]);
+  await recordTransition(c,p,'LIVE_CONFIRMED',current?'Verified mock continuation':'Verified mock initial source',null,o.id,{videoId:o.video_id,channelId:o.channel_id});
   const type=current?'program.stream_replaced':'program.live_confirmed';
   const key=current?p.id+':replacement:'+sequence:p.id+':initial';
   await c.query('INSERT INTO domain_outbox(event_key,program_id,event_type,revision) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[key,p.id,type,p.revision+1]);
@@ -106,6 +121,6 @@ export async function confirmJoin(token:string,nonce:string,browser:string,actor
   await c.query('UPDATE join_nonces SET consumed=true WHERE digest=$1',[digest(nonce)]);
   await c.query(`INSERT INTO checkin_events(organization_id,member_id,program_id,action,assurance,stream_sequence,last_stream_sequence) VALUES($1,$2,$3,$4,$5,$6,$6)
    ON CONFLICT(organization_id,member_id,program_id,action) DO UPDATE SET last_opened_at=now(),last_stream_sequence=excluded.last_stream_sequence,assurance=CASE WHEN excluded.assurance='AUTHENTICATED_MEMBER' THEN excluded.assurance ELSE checkin_events.assurance END`,[j.organization_id,j.member_id,j.program_id,j.purpose,assurance,p.current_sequence]);
-  return {location:'https://www.youtube.com/watch?v='+p.video_id,assurance};
+  return {location:mockStreamDestination(p.video_id),assurance};
  });
 }

@@ -3,6 +3,8 @@ import formbody from '@fastify/formbody';
 import cookie from '@fastify/cookie';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { currentProgram } from '../../../packages/shared/programs.ts';
+import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../../../packages/shared/administration.ts';
 import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { registerPages, renderPage } from '../../web/src/pages.ts';
 import { pool } from '../../../packages/db/index.ts';
@@ -12,27 +14,27 @@ import { mintNonce, confirmJoin, DomainError, setOptIn } from '../../../packages
 export async function app() {
  const a=Fastify({logger:false,bodyLimit:65536,trustProxy:false});
  await a.register(formbody);await a.register(cookie);
- a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://www.youtube.com; frame-ancestors 'none'");return payload;});
- a.setErrorHandler((err,req,reply)=>{const known=err instanceof DomainError;
+ a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");return payload;});
+ a.setErrorHandler((err,req,reply)=>{const known=err instanceof DomainError;const errorStatus=known?err.status:err instanceof z.ZodError?422:500;
   if(req.headers.accept?.includes('text/html')) {
-   const status=known?err.status:400;
-   const message=status===503?'We are checking the livestream link. Please try again shortly.':status===401?'Sign in to open your private account.':status===403?'This action is not permitted.':status===404?'This link or page is unavailable.':'The request could not be completed. Please return and try again.';
-   return reply.code(status).type('text/html').send(renderPage('Please try again',`<section class=card data-error-code="${known?err.code:"REQUEST_FAILED"}"><h1>${message}</h1><p>No successful link opening has been recorded by this failed action.</p><a href=/live>Return to live information</a> · <a href=/demo/sign-in>Development sign-in</a></section>`));
+   const status=errorStatus;
+   const message=known&&err.code==='REVISION_CONFLICT'?'This record changed. Reload the control room before trying again.':known&&err.code==='RECENT_AUTHENTICATION_REQUIRED'?'Sign in again before changing program or sending settings.':status===503?'We are checking the livestream link. Please try again shortly.':status===401?'Sign in to open your private account.':status===403?'This action is not permitted.':status===404?'This link or page is unavailable.':'The request could not be completed. Please return and try again.';
+   return reply.code(status).type('text/html').send(renderPage('Please try again',`<section class=card data-error-code="${known?err.code:"REQUEST_FAILED"}"><h1>${message}</h1><p>Please return to the current page and reload before trying again.</p><a href=/live>Return to live information</a> · <a href=/demo/sign-in>Development sign-in</a></section>`));
   }
-  reply.code(known?err.status:400).send({error:{code:known?err.code:'REQUEST_FAILED',message:known&&err.status===503?'We are checking the livestream link.':'The request could not be completed.',requestId:req.id,retryable:known&&err.status===503,fieldErrors:[]}});});
+  reply.code(errorStatus).send({error:{code:known?err.code:'REQUEST_FAILED',message:known&&err.status===503?'We are checking the livestream link.':'The request could not be completed.',requestId:req.id,retryable:known&&err.status===503,fieldErrors:[]}});});
  async function principal(req:any,required=true) {
   const auth=req.headers.authorization;
   const token=typeof auth==='string' && auth.startsWith('Bearer ')?auth.slice(7):(req.cookies.fixture_session??'');
   if(token && !auth && !['GET','HEAD'].includes(req.method) && !isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
   if(!token || config.FIXTURE_AUTH_ENABLED!=='true') {if(required) throw new DomainError('AUTHENTICATION_REQUIRED',401);return undefined;}
-  const row=(await pool.query('SELECT m.* FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active',[digest(token)])).rows[0];
+  const row=(await pool.query('SELECT m.*,s.digest AS session_digest FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active',[digest(token)])).rows[0];
   if(!row && required) throw new DomainError('AUTHENTICATION_REQUIRED',401);
   return row;
  }
  const page=(body:string)=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CTDMP Connect — Demo</title><style>body{font:18px system-ui;background:#101c30;color:#fff4df;max-width:44rem;margin:3rem auto;padding:1rem}a{color:#f3cf81}button{font:inherit;padding:1rem 2rem;border:0;border-radius:.5rem;background:#f3cf81;color:#101c30}small{display:block;margin:2rem 0}</style><body><p>MOCK ENVIRONMENT · NO REAL MESSAGES</p><h1>CTDMP Connect</h1>${body}<small>Working product identity. Official affiliation has not been verified.</small></body></html>`;
  a.get('/health/live',async()=>({status:'ok',mode:'MOCK'}));
  a.get('/health/ready',async(_req,reply)=>{try{await pool.query('SELECT 1');return {status:'ready',scope:'database-only'};}catch{reply.code(503);return {status:'unavailable'};}});
- a.get('/api/v1/public/programs/current',async()=>({mode:'MOCK',program:(await pool.query('SELECT id,title,state,revision,current_sequence,local_date FROM programs ORDER BY local_date DESC LIMIT 1')).rows[0]??null}));
+ a.get('/api/v1/public/programs/current',async()=>{const p=await currentProgram();return {mode:'MOCK',program:p?{id:p.id,title:p.title,state:p.state,revision:p.revision,current_sequence:p.current_sequence,local_date:p.local_date}:null};});
  await registerPages(a,principal);
  a.get('/j/:token',async(req,reply)=>{
   const token=z.object({token:z.string().max(100)}).parse(req.params).token;
@@ -63,6 +65,24 @@ export async function app() {
   const items=(await pool.query('SELECT c.member_id,c.program_id,c.action,c.assurance,c.first_opened_at FROM checkin_events c JOIN members m ON m.id=c.member_id WHERE c.program_id=$1 AND c.organization_id=$2 AND m.branch_id=$3 ORDER BY c.first_opened_at DESC LIMIT 50',[id,m.organization_id,grant.branch_id])).rows;
   await pool.query("INSERT INTO audit_logs(actor,action,resource_id) VALUES($1,'engagement.read',$2)",[m.id,id]);
   return {items,policy:'Fictional fixed branch membership only; transfers not implemented'};
+ });
+ const adminInput=z.object({revision:z.number().int().min(0),reason:z.string().trim().min(8).max(500)});
+ const programId=(params:unknown)=>z.object({id:z.string().min(1).max(100)}).parse(params).id;
+ for(const decision of ['APPROVED','REJECTED'] as const) {
+  a.post('/api/v1/admin/programs/:id/candidates/:observationId/'+(decision==='APPROVED'?'approve':'reject'),async req=>{
+   const actor=await principal(req);const params=z.object({id:z.string().min(1).max(100),observationId:z.string().regex(/^[0-9]{1,18}$/)}).parse(req.params);
+   const input=adminInput.strict().parse(req.body);
+   return reviewCandidate(actor,params.id,{...input,observationId:params.observationId,decision});
+  });
+ }
+ a.post('/api/v1/admin/programs/:id/finish',async req=>finishProgram(await principal(req),programId(req.params),adminInput.strict().parse(req.body)));
+ a.post('/api/v1/admin/programs/:id/select',async req=>selectProgram(await principal(req),programId(req.params),adminInput.extend({selectionRevision:z.number().int().min(0)}).strict().parse(req.body)));
+ a.put('/api/v1/admin/sending-controls',async req=>setSendingPaused(await principal(req),adminInput.extend({paused:z.boolean()}).strict().parse(req.body)));
+ a.get('/api/v1/admin/programs/:id/transitions',async req=>{
+  const actor=await principal(req);const id=programId(req.params);
+  if(!(await pool.query("SELECT 1 FROM grants WHERE member_id=$1 AND permission='program.read' AND branch_id IS NULL",[actor.id])).rowCount)throw new DomainError('PERMISSION_DENIED',403);
+  if(!(await pool.query('SELECT 1 FROM programs WHERE id=$1 AND organization_id=$2',[id,actor.organization_id])).rowCount)throw new DomainError('NOT_FOUND',404);
+  return {mode:'MOCK',items:(await pool.query('SELECT previous_state,next_state,revision,actor,reason,evidence,created_at FROM program_transitions WHERE program_id=$1 ORDER BY revision DESC LIMIT 100',[id])).rows};
  });
  await a.register(async hook=>{
   hook.removeContentTypeParser('application/json');

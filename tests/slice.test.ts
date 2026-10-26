@@ -5,6 +5,8 @@ import { pool, tx } from '../packages/db/index.ts';
 import { app } from '../apps/api/src/app.ts';
 import { observeOne,planOne,dispatchOne,mintNonce,confirmJoin,setOptIn } from '../packages/shared/domain.ts';
 import { randomToken,digest,decrypt } from '../packages/integrations/crypto.ts';
+import { createScenario, queueScenarioObservation } from '../packages/shared/demo-scenarios.ts';
+import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../packages/shared/administration.ts';
 import { config } from '../packages/shared/config.ts';
 if(config.APP_ENV!=='test' || new URL(config.DATABASE_URL).pathname!=='/ctdmp_test') throw new Error('Tests require isolated ctdmp_test database');
 const server=await app();
@@ -171,6 +173,108 @@ test('WEB: sign-in requires protected form and valid expiring fixture session',a
  assert.equal((await server.inject({...request,headers:{...request.headers,origin:'null','sec-fetch-site':'same-origin',host:'127.0.0.1:'+config.PORT}})).statusCode,303);
  await pool.query('UPDATE fixture_sessions SET expires_at=now() WHERE member_id=$1',[f.m]);
  assert.equal((await server.inject(request)).statusCode,401);
+});
+async function administrator(f:Awaited<ReturnType<typeof fixture>>,permission='program.manage',member=f.admin) {
+ await pool.query('INSERT INTO grants(member_id,permission,branch_id) VALUES($1,$2,null) ON CONFLICT(member_id,permission) DO UPDATE SET branch_id=null',[member,permission]);
+ const session=digest(config.FIXTURE_SECRET+':'+member);
+ await pool.query('INSERT INTO administrative_verifications VALUES($1,now()) ON CONFLICT(session_digest) DO UPDATE SET verified_at=now()',[session]);
+ return {id:member,organization_id:f.org,session_digest:session};
+}
+async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_A',source=f.channel,live=true) {
+ return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
+}
+const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+test('ADMIN: competing candidate approval is revision-checked and stores evidence; completion is final',async()=>{
+ const f=await fixture();const actor=await administrator(f);const first=await candidate(f);await candidate(f,'MockVideo_B');while(await observeOne()){}
+ assert.equal((await pool.query('SELECT state FROM programs WHERE id=$1',[f.program])).rows[0].state,'AWAITING_ADMIN');
+ const input={revision:await revision(f.program),reason:'Reviewed official mock source'};
+ const url='/api/v1/admin/programs/'+f.program+'/candidates/'+first+'/approve';
+ const result=await server.inject({method:'POST',url,headers:auth(actor.id),payload:input});assert.equal(result.statusCode,200);
+ assert.equal((await server.inject({method:'POST',url,headers:auth(actor.id),payload:input})).statusCode,409);
+ assert.equal((await pool.query('SELECT decision FROM candidate_decisions WHERE program_id=$1',[f.program])).rows[0].decision,'APPROVED');
+ assert.equal((await pool.query('SELECT actor FROM program_transitions WHERE program_id=$1 AND revision=$2',[f.program,input.revision+1])).rows[0].actor,actor.id);
+ await finishProgram(actor,f.program,{revision:await revision(f.program),reason:'Mock session has now finished'});
+ await f.observe('MockVideo_A');assert.equal((await pool.query('SELECT state FROM programs WHERE id=$1',[f.program])).rows[0].state,'COMPLETED');
+ assert.equal((await pool.query("SELECT count(*)::int n FROM domain_outbox WHERE program_id=$1 AND event_type='program.live_confirmed'",[f.program])).rows[0].n,1);
+});
+test('ADMIN: source authority, evidence freshness, branch scope and recent authentication cannot be bypassed',async()=>{
+ const f=await fixture();const actor=await administrator(f);const observation=await candidate(f,'MockVideo_A','unapproved');
+ const review=()=>reviewCandidate(actor,f.program,{revision:0,reason:'Check mandatory source evidence',observationId:observation,decision:'APPROVED'});
+ await assert.rejects(review(),/CANDIDATE_NOT_VERIFIED/);
+ const valid=await candidate(f,'MockVideo_B');await pool.query("UPDATE mock_observations SET observed_at=now()-interval '3 minutes' WHERE id=$1",[valid]);
+ await assert.rejects(reviewCandidate(actor,f.program,{revision:0,reason:'Reject stale evidence for approval',observationId:valid,decision:'APPROVED'}),/STALE_EVIDENCE/);
+ await pool.query('UPDATE grants SET branch_id=$2 WHERE member_id=$1 AND permission=$3',[actor.id,f.org+'-a','program.manage']);
+ await assert.rejects(review(),/PERMISSION_DENIED/);
+ await pool.query("UPDATE grants SET branch_id=null WHERE member_id=$1 AND permission='program.manage'",[actor.id]);
+ await pool.query("UPDATE administrative_verifications SET verified_at=now()-interval '16 minutes' WHERE session_digest=$1",[actor.session_digest]);
+ await assert.rejects(review(),/RECENT_AUTHENTICATION_REQUIRED/);
+ assert.equal(await revision(f.program),0);
+});
+test('ADMIN: rejected video remains blocked for the watcher until explicit fresh approval',async()=>{
+ const f=await fixture();const actor=await administrator(f);const first=await candidate(f);
+ await reviewCandidate(actor,f.program,{revision:0,reason:'Wrong candidate pending review',observationId:first,decision:'REJECTED'});
+ await f.observe();assert.equal((await pool.query('SELECT state FROM programs WHERE id=$1',[f.program])).rows[0].state,'SCHEDULED');
+ const latest=(await pool.query('SELECT id FROM mock_observations WHERE program_id=$1 ORDER BY id DESC LIMIT 1',[f.program])).rows[0].id;
+ await reviewCandidate(actor,f.program,{revision:await revision(f.program),reason:'New evidence now supports this source',observationId:latest,decision:'APPROVED'});
+ assert.equal((await pool.query('SELECT current_sequence FROM programs WHERE id=$1',[f.program])).rows[0].current_sequence,1);
+});
+test('ADMIN: manual replacement preserves personal capability and initial notification identity',async()=>{
+ const f=await fixture();const actor=await administrator(f);await f.observe();const token=await f.join();const browser=randomToken();await confirmJoin(token,await mintNonce(token,browser),browser,f.m);
+ const replacement=await candidate(f,'MockVideo_B');while(await observeOne()){}
+ await reviewCandidate(actor,f.program,{revision:await revision(f.program),reason:'Verified mock replacement source B',observationId:replacement,decision:'APPROVED'});
+ assert.ok((await confirmJoin(token,await mintNonce(token,browser),browser,f.m)).location.endsWith('MockVideo_B'));
+ assert.equal((await pool.query('SELECT count(*)::int n FROM checkin_events WHERE program_id=$1',[f.program])).rows[0].n,1);
+ assert.equal((await pool.query("SELECT count(*)::int n FROM domain_outbox WHERE program_id=$1 AND event_type='program.live_confirmed'",[f.program])).rows[0].n,1);
+});
+test('ADMIN: concurrent decisions serialize; stale revisions never overwrite the winner',async()=>{
+ const f=await fixture();const actor=await administrator(f);const first=await candidate(f),second=await candidate(f,'MockVideo_B');
+ const results=await Promise.allSettled([first,second].map(id=>reviewCandidate(actor,f.program,{revision:0,reason:'Concurrent operator decision test',observationId:id,decision:'APPROVED'})));
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ const rejected=results.find(r=>r.status==='rejected') as PromiseRejectedResult;assert.match(rejected.reason.message,/REVISION_CONFLICT/);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM stream_versions WHERE program_id=$1',[f.program])).rows[0].n,1);
+});
+test('ADMIN: watcher and manual decision share lock order and create one initial event',async()=>{
+ const f=await fixture();const actor=await administrator(f);const observation=await candidate(f);
+ const results=await Promise.allSettled([observeOne(),reviewCandidate(actor,f.program,{revision:0,reason:'Operator and watcher concurrency test',observationId:observation,decision:'APPROVED'})]);
+ for(const result of results)if(result.status==='rejected')assert.match(result.reason.message,/REVISION_CONFLICT/);
+ assert.equal((await pool.query('SELECT current_sequence FROM programs WHERE id=$1',[f.program])).rows[0].current_sequence,1);
+ assert.equal((await pool.query("SELECT count(*)::int n FROM domain_outbox WHERE program_id=$1 AND event_type='program.live_confirmed'",[f.program])).rows[0].n,1);
+});
+test('ADMIN: sending pause is separately granted, auditable and revision-checked',async()=>{
+ const f=await fixture();const actor=await administrator(f);await f.observe();while(await planOne()){}
+ await assert.rejects(setSendingPaused(actor,{revision:0,paused:true,reason:'Pause pending manual review'}),/PERMISSION_DENIED/);
+ await administrator(f,'messaging.manage');await setSendingPaused(actor,{revision:0,paused:true,reason:'Pause pending manual review'});
+ await assert.rejects(setSendingPaused(actor,{revision:0,paused:false,reason:'Stale switch should be rejected'}),/REVISION_CONFLICT/);
+ const n=(await pool.query('SELECT id FROM notifications WHERE program_id=$1 AND member_id=$2',[f.program,f.m])).rows[0];await dispatchOne(n.id);
+ assert.equal((await pool.query('SELECT reason FROM notifications WHERE id=$1',[n.id])).rows[0].reason,'PAUSED');
+ const audit=(await pool.query("SELECT details FROM audit_logs WHERE actor=$1 AND action='sending.paused'",[actor.id])).rows[0];assert.equal(audit.details.reason,'Pause pending manual review');
+});
+test('ADMIN: explicit Home selection is scoped, records a reason and rejects stale selection forms',async()=>{
+ const f=await fixture();const actor=await administrator(f);const input={revision:0,selectionRevision:0,reason:'Publish this mock session on Home'};
+ await selectProgram(actor,f.program,input);
+ await assert.rejects(selectProgram(actor,f.program,input),/REVISION_CONFLICT/);
+ const other=await fixture();await assert.rejects(selectProgram(actor,other.program,{...input,selectionRevision:1}),/NOT_FOUND/);
+ const audit=(await pool.query("SELECT details FROM audit_logs WHERE actor=$1 AND action='program.selected'",[actor.id])).rows[0];assert.equal(audit.details.reason,input.reason);
+});
+test('LIVE: recovering the same source preserves stream revision and sends no new initial event',async()=>{
+ const f=await fixture();await f.observe();await f.observe('MockVideo_A',false);await f.observe();
+ assert.equal((await pool.query('SELECT current_sequence FROM programs WHERE id=$1',[f.program])).rows[0].current_sequence,1);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM stream_versions WHERE program_id=$1',[f.program])).rows[0].n,1);
+});
+test('DEMO: fixture controls require explicit grants, reject ordinary sessions and replay creation safely',async()=>{
+ const f=await fixture();const actor=await administrator(f);const input={selectionRevision:0,reason:'Create a controlled fictional session',requestKey:randomToken()};
+ await assert.rejects(createScenario(actor,input),/PERMISSION_DENIED/);
+ await administrator(f,'demo.manage');await assert.rejects(queueScenarioObservation(actor,f.program,{revision:0,scenario:'START_A'}),/NOT_FOUND/);
+ const first=await createScenario(actor,input),again=await createScenario(actor,input);assert.equal(first.programId,again.programId);assert.equal(again.replayed,true);
+ await assert.rejects(createScenario(actor,{...input,reason:'Different input using the same request key'}),/IDEMPOTENCY_CONFLICT/);
+ await queueScenarioObservation(actor,first.programId,{revision:0,scenario:'START_A'});while(await observeOne()){}
+ const p=(await pool.query('SELECT state,current_sequence FROM programs WHERE id=$1',[first.programId])).rows[0];assert.equal(p.state,'LIVE_CONFIRMED');assert.equal(p.current_sequence,1);
+});
+test('WEB: prepared-alert links are visible only to their fictional recipient',async()=>{
+ const f=await fixture();await f.observe();while(await planOne()){}const n=(await pool.query('SELECT id FROM notifications WHERE program_id=$1 AND member_id=$2',[f.program,f.m])).rows[0];await dispatchOne(n.id);
+ const own=await server.inject({url:'/account/alerts',headers:auth(f.m)});assert.equal(own.statusCode,200);assert.match(own.body,/href="\/j\/[A-Za-z0-9_-]{43}"/);assert.match(own.body,/No WhatsApp message was sent/);
+ const other=await server.inject({url:'/account/alerts',headers:auth(f.other)});assert.equal(other.statusCode,200);assert.ok(!other.body.includes('href="/j/'));
+ assert.equal((await server.inject({url:'/account/alerts'})).statusCode,401);
 });
 after(async()=>{
  // Fixtures remain isolated and explicitly fictional; retained for inspection, never real member data.

@@ -1,0 +1,45 @@
+
+> ctdmp-connect@ check /home/ubuntu/ctdmp-connect
+> pnpm typecheck && pnpm test
+
+
+> ctdmp-connect@ typecheck /home/ubuntu/ctdmp-connect
+> tsc --noEmit
+
+
+> ctdmp-connect@ test /home/ubuntu/ctdmp-connect
+> tsx scripts/test.ts
+
+✔ T-LIVE-01/07 + T-MSG-06/14: confirmed once; one mock notification per member; opted-out suppressed (762.955278ms)
+✔ T-JOIN-01/02/03/04/05/11 + T-LIVE-08/10: read-only previews, protected concurrent actions, same token reaches B (565.539683ms)
+✔ T-JOIN-02: protected HTTP POST gives 303 only after nonce verification (55.526102ms)
+✔ T-JOIN-06/08/12: invalid, mismatched account, uncertain destination cause no check-in (70.613185ms)
+✔ T-AUTH-01/02/03/04: own history, scoped branch rows, moderator denial, grant revocation (97.079694ms)
+✔ T-MSG-02: opt-out after planning blocks dispatch and reserves nothing (151.24773ms)
+✔ T-MSG-09: concurrent dispatch cannot exceed remaining budget (65.321661ms)
+✔ T-LIVE-02/04/06: wrong source, upcoming video, provider outage never confirm live (39.964532ms)
+✔ T-LIVE-05: competing streams require review without notification (27.88584ms)
+✔ T-MSG-04/05: signed mock webhook durably accepted; duplicate inbox key has one effect (14.72202ms)
+✔ T-JOIN security: source revocation immediately blocks resolver (33.967882ms)
+✔ WEB: private HTML histories and scoped control room use current grants (83.504288ms)
+✔ WEB: cookie preference forms reject CSRF, persist withdrawal and revoke logout session (29.523524ms)
+✔ WEB: sign-in requires protected form and valid expiring fixture session (26.149489ms)
+✔ ADMIN: competing candidate approval is revision-checked and stores evidence; completion is final (65.907454ms)
+✔ ADMIN: source authority, evidence freshness, branch scope and recent authentication cannot be bypassed (39.085574ms)
+✔ ADMIN: rejected video remains blocked for the watcher until explicit fresh approval (48.925757ms)
+✔ ADMIN: manual replacement preserves personal capability and initial notification identity (62.863372ms)
+✔ ADMIN: concurrent decisions serialize; stale revisions never overwrite the winner (31.62242ms)
+✔ ADMIN: watcher and manual decision share lock order and create one initial event (28.996841ms)
+✔ ADMIN: sending pause is separately granted, auditable and revision-checked (126.49872ms)
+✔ ADMIN: explicit Home selection is scoped, records a reason and rejects stale selection forms (39.094804ms)
+✔ LIVE: recovering the same source preserves stream revision and sends no new initial event (40.347077ms)
+✔ DEMO: fixture controls require explicit grants, reject ordinary sessions and replay creation safely (60.811999ms)
+✔ WEB: prepared-alert links are visible only to their fictional recipient (71.66327ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4749.254674

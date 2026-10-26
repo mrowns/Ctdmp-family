@@ -1,0 +1,23 @@
+
+> ctdmp-connect@ test:browser /home/ubuntu/ctdmp-connect
+> tsx scripts/test.ts --browser
+
+Fictional fixtures ready; fixture session tokens not printed.
+PASS No invented live state on initial home
+PASS GET landing creates no check-in
+PASS No-JavaScript protected POST reaches A with one token-associated action
+PASS Cookie sign-in and protected preference withdrawal work without JavaScript
+PASS Uncertain source shows recovery page without another action
+PASS Same personal link reaches B; assurance upgrades; unique count remains one
+PASS Anonymous generic joining creates no member action
+PASS Authenticated generic joining preserves one unique member action
+PASS Scoped admin sees permitted member and immutable stream history
+PASS Recently signed-in administrator approves competing evidence through a protected form
+PASS Explicit administrator selection determines the session shown on Home
+PASS Protected pause and resume forms persist the simulated sending switch
+PASS Completion removes the live action; a stale browser form shows a useful conflict
+PASS Control-room scenario creation and member-owned prepared alert complete the start journey without database commands
+PASS Interactive interruption and replacement controls recover the same personal link without another unique action
+PASS Other branch administrator receives no member rows from branch A
+PASS Other member and moderator cannot open admin control room; own history stays private
+PASS Worker restart and repeated source evidence preserve notification and action uniqueness
