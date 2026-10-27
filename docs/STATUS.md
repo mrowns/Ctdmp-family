@@ -1,5 +1,14 @@
 # Status — 27 October 2026
 
+## VPS continuation — durable notification queue recovery
+
+After the WhatsApp-link slice, the worker queue handoff was extracted to packages/shared/dispatch-queue.ts. Each worker cycle rebuilds BullMQ jobs by scanning durable PostgreSQL PLANNED notifications, using stable notification job IDs and a bounded batch. PostgreSQL remains the source of truth; prepared or suppressed notifications are not eligible for reconstruction.
+
+A new isolated Redis/BullMQ integration case creates two pending notifications, enqueues them, clears only its unique test queue, and verifies both are recovered. It repeats reconciliation to check job uniqueness, marks one notification prepared, clears the test queue again, and verifies only the still-planned notification returns.
+
+Actual verification on the VPS: pnpm check passed TypeScript and 34/34 PostgreSQL/API tests; pnpm test:browser passed all 21 Chromium checks. After restarting ctdmp-worker, systemd reported active; API liveness returned MOCK/ok and readiness returned database-only/ready. git diff --check passed. This simulates loss of BullMQ queue state under a unique test prefix; it is not a Redis server outage or a production failover drill. No real provider traffic, charges, or member data were used.
+
+
 ## Active continuation — mock WhatsApp identity linking
 
 The last synced baseline is 680e0ee on origin/build/phase-1-browser-slice. Current work extends the mock WhatsApp link slice with identity replacement behavior and integration/browser coverage. Migration 015 and the simulator remain local/test only. The member security page can start a challenge for a reserved fictitious test number, displays a one-time mock code without cache, and lists only masked linked identities with an unlink action. A recently authenticated demo.manage administrator can submit a separate mock inbound event. The flow stores keyed digests and an encrypted destination, limits attempts to five, expires challenges after ten minutes, and cleans stale challenges in the worker. It cannot contact Meta or verify real phone ownership.

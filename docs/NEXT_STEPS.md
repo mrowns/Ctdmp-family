@@ -1,5 +1,10 @@
 # Next coding steps — 25 October 2026
 
+## Current VPS continuation — 27 October
+
+The mock WhatsApp identity-link slice has been committed and pushed as a9e9282; its 33 API checks and 21 browser checks passed. The next Phase 1 reliability slice extracts the worker's PLANNED-notification queue reconciliation into a shared function. The new isolated Redis integration case clears its test-only BullMQ queue and verifies pending DB records reconstruct jobs without repeating prepared notifications. pnpm check now passes 34 API/database tests, and pnpm test:browser passes 21 checks. GitHub Actions run 40490802540 passed on a9e9282. A full Redis outage/failover drill remains open.
+
+
 1. Complete the remaining Phase 1 contracts: production identity preparation, owner-confirmed schedule configuration and real official-channel registry. Mock-only approval controls are now available; delivery reconciliation and privacy retention remain open. Provider health/freshness has a MOCK-only durable projection and admin view. Candidate approval/rejection, replacement/finish, explicit Home-session selection, audit reasons and pause/resume now work in the private fixture environment.
 2. WebAuthn passkey registration, discoverable sign-in, development-only self-registration and one-time recovery codes now work for fictional members. New accounts remain inactive until the first passkey verifies and begin with alerts off. Complete production recovery and signup policy, real-provider WhatsApp identity linking, real-domain RP configuration, stronger distributed abuse controls, administrator assurance and physical-device checks before any pilot. Production startup remains blocked.
 3. Extend the interim server-rendered frontend into the proposed Next.js/Tailwind application while preserving semantic forms and server-enforced authorization. Add replay contracts, full category preferences, pagination, OpenAPI and typed clients.

@@ -1,3 +1,4 @@
+import { Queue } from 'bullmq';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, createHmac } from 'node:crypto';
@@ -6,6 +7,7 @@ import { app } from '../apps/api/src/app.ts';
 import { observeOne,planOne,dispatchOne,mintNonce,confirmJoin,setOptIn,processWebhookOne,reconcileReceiptOne,cleanupEphemeralData } from '../packages/shared/domain.ts';
 import { randomToken,digest,decrypt } from '../packages/integrations/crypto.ts';
 import { listWhatsAppIdentities, processMockWhatsAppInbound, startWhatsAppLinkChallenge, unlinkWhatsAppIdentity } from '../packages/shared/whatsapp-linking.ts';
+import { enqueuePendingNotifications } from '../packages/shared/dispatch-queue.ts';
 import { createScenario, queueScenarioObservation } from '../packages/shared/demo-scenarios.ts';
 import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../packages/shared/administration.ts';
 import { config } from '../packages/shared/config.ts';
@@ -590,6 +592,32 @@ test('WEB: prepared-alert links are visible only to their fictional recipient',a
  const other=await server.inject({url:'/account/alerts',headers:auth(f.other)});assert.equal(other.statusCode,200);assert.ok(!other.body.includes('href="/j/'));
  assert.equal((await server.inject({url:'/account/alerts'})).statusCode,401);
 });
+
+test('OPS-001: planned notifications are rebuilt after isolated BullMQ state loss without requeueing prepared rows',async()=>{
+ const f=await fixture();await setOptIn(f.other,true);await f.observe();while(await planOne()){}
+ const planned=(await pool.query("SELECT id FROM notifications WHERE organization_id=$1 AND state='PLANNED' ORDER BY id",[f.org])).rows;
+ assert.equal(planned.length,2);
+ const redis=new URL(config.REDIS_URL),prefix='ctdmp-test-ctdmp_test-recovery-'+randomUUID();
+ const queue=new Queue('ctdmp-mock-dispatch',{connection:{host:redis.hostname,port:Number(redis.port||6379),maxRetriesPerRequest:null},prefix});
+ try {
+  await queue.waitUntilReady();
+  const first=await enqueuePendingNotifications(queue,100,f.org);assert.deepEqual(first,{scanned:2,submitted:2});
+  assert.equal(await queue.getWaitingCount(),2);
+  await enqueuePendingNotifications(queue,100,f.org);assert.equal(await queue.getWaitingCount(),2);
+  await queue.obliterate({force:true});
+  assert.equal(await queue.getWaitingCount(),0);
+  const recovered=await enqueuePendingNotifications(queue,100,f.org);assert.deepEqual(recovered,{scanned:2,submitted:2});
+  assert.equal(await queue.getWaitingCount(),2);
+  await dispatchOne(String(planned[0].id));
+  await queue.obliterate({force:true});
+  const afterDispatch=await enqueuePendingNotifications(queue,100,f.org);assert.deepEqual(afterDispatch,{scanned:1,submitted:1});
+  const jobs=await queue.getJobs(['waiting']);
+  assert.equal(jobs.length,1);assert.equal(jobs[0].data.id,String(planned[1].id));assert.equal(jobs[0].id,'notification-'+planned[1].id);
+ } finally {
+  try {await queue.obliterate({force:true});} finally {await queue.close();}
+ }
+});
+
 after(async()=>{
  // Fixtures remain isolated and explicitly fictional; retained for inspection, never real member data.
  await server.close();await pool.end();

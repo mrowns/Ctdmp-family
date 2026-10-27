@@ -2,6 +2,7 @@ import { Queue, Worker } from 'bullmq';
 import { config } from '../../../packages/shared/config.ts';
 import { observeOne, planOne, dispatchOne, processWebhookOne, reconcileReceiptOne, cleanupEphemeralData } from '../../../packages/shared/domain.ts';
 import { pool } from '../../../packages/db/index.ts';
+import { enqueuePendingNotifications } from '../../../packages/shared/dispatch-queue.ts';
 const u=new URL(config.REDIS_URL);
 const connection={host:u.hostname,port:Number(u.port||6379),maxRetriesPerRequest:null};
 const prefix='ctdmp-'+config.APP_ENV+'-'+new URL(config.DATABASE_URL).pathname.slice(1);
@@ -22,8 +23,7 @@ while(!stopped) {
    if(cleanup.payloadsCleared||cleanup.noncesDeleted||cleanup.linksDeleted||cleanup.challengesDeleted||cleanup.sessionsDeleted||cleanup.pendingRegistrationsDeleted||cleanup.recoveryAttemptsDeleted||cleanup.whatsappChallengesDeleted)console.log('Ephemeral retention cleanup:',JSON.stringify(cleanup));
   }
   for(let i=0;i<25 && await planOne();i++) {}
-  const pending=await pool.query("SELECT id FROM notifications WHERE state='PLANNED' ORDER BY id LIMIT 100");
-  for(const n of pending.rows) await queue.add('prepare',{id:n.id},{jobId:'notification-'+n.id,removeOnComplete:true,attempts:3,backoff:{type:'exponential',delay:1000}});
+  await enqueuePendingNotifications(queue,100);
   await pool.query("INSERT INTO worker_heartbeats VALUES('main',now()) ON CONFLICT(id) DO UPDATE SET seen_at=now()");
  } catch(e) {console.error('Worker cycle failed:',e instanceof Error?e.name:'unknown');}
  await pause();
