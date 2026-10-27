@@ -101,7 +101,7 @@ export async function dispatchOne(id:string):Promise<void> {
   await c.query("UPDATE notifications SET state='DRY_RUN_PREPARED',reason='MOCK_PROVIDER_NO_EXTERNAL_SEND' WHERE id=$1",[id]);
  });
 }
-export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number;pendingRegistrationsDeleted:number}> {
+export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number;pendingRegistrationsDeleted:number;recoveryAttemptsDeleted:number}> {
  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Retention batch size must be between 1 and 1000');
  return tx(async c=>{
   const payloads=(await c.query(`SELECT id,join_link_digest FROM notifications
@@ -144,7 +144,8 @@ export async function cleanupEphemeralData(batchSize=500,organizationId?:string)
    SELECT p.member_id FROM pending_member_registrations p JOIN members m ON m.id=p.member_id WHERE p.expires_at<=now()
     AND ($2::text IS NULL OR m.organization_id=$2) ORDER BY p.expires_at,p.member_id FOR UPDATE OF p,m SKIP LOCKED LIMIT $1
   ) DELETE FROM members m USING candidates c WHERE m.id=c.member_id RETURNING m.id`,[batchSize,organizationId??null])).rows;
-  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length,pendingRegistrationsDeleted:pendingRegistrations.length};
+  const recoveryAttempts=(await c.query("WITH candidates AS (SELECT browser_digest FROM recovery_attempt_buckets WHERE window_started_at<now()-interval '1 day' ORDER BY window_started_at,browser_digest FOR UPDATE SKIP LOCKED LIMIT $1) DELETE FROM recovery_attempt_buckets b USING candidates x WHERE b.browser_digest=x.browser_digest RETURNING b.browser_digest",[batchSize])).rowCount??0;
+  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length,pendingRegistrationsDeleted:pendingRegistrations.length,recoveryAttemptsDeleted:recoveryAttempts};
  });
 }
 export async function setOptIn(member:string,value:boolean) {

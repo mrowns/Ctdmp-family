@@ -1,0 +1,25 @@
+CTDMP Connect - Local/test passkey recovery
+Date: 27 October 2026
+Repository: /home/ubuntu/ctdmp-connect
+Branch: build/phase-1-browser-slice
+Environment: isolated ctdmp_test, local loopback API/worker, headless Chromium
+Provider modes: YouTube MOCK; WhatsApp DRY_RUN; external browser navigation intercepted.
+
+Implemented:
+- Migration 014 stores eight random 256-bit single-use recovery code digests per member; raw codes are returned only for one-time display.
+- Generating a replacement set invalidates older unused codes.
+- Recovery accepts a normalized organization-scoped username plus one code. Unknown usernames and invalid/replayed codes share a generic rejection.
+- A persistent bucket limits each browser token to eight attempts per 15-minute window; one-day-old buckets are removed by bounded worker retention.
+- Successful recovery invalidates the full code set, revokes existing member sessions, records an audit event without secrets, and issues a 12-hour session with no credential binding.
+- A recovered member can register a replacement passkey through the existing recent-authentication flow.
+- Recovery uses a standard HTML form and works without JavaScript.
+
+Actual checks:
+- pnpm check: TypeScript passed; 31 PostgreSQL/API tests passed, 0 failed or skipped.
+- pnpm test:browser: 20 Chromium checks passed, including recovery, session revocation, replacement passkey enrollment and discoverable sign-in.
+- Browser evidence: docs/evidence/browser-slice.json; screenshots remain in docs/evidence/screenshots/.
+
+Limitations:
+- No production recovery policy, distributed/IP abuse controls, verified WhatsApp recovery, public signup, production RP domain, native ceremony or physical-device validation.
+- The virtual browser test does not prove device compatibility or launch readiness.
+- Full Phase 1 acceptance and launch readiness remain incomplete.

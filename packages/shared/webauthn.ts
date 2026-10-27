@@ -217,6 +217,43 @@ export async function revokeCredential(actor:AuthenticatedMember,id:string) {
   return {revoked:true,revokedCurrentSession:actor.session_kind==='member'&&actor.credential_id===key.credential_id};
  });
 }
+export async function createRecoveryCodes(actor:AuthenticatedMember) {
+ const codes=Array.from({length:8},()=>randomToken());
+ const codeDigests=codes.map(digest);
+ await tx(async c=>{
+  const member=(await c.query('SELECT id FROM members WHERE id=$1 AND organization_id=$2 AND active FOR UPDATE',[actor.id,actor.organization_id])).rowCount;
+  if(!member)throw new DomainError('AUTHENTICATION_REQUIRED',401);
+  await requireRecentAuthentication(c,actor);
+  await c.query('UPDATE member_recovery_codes SET revoked_at=now() WHERE member_id=$1 AND used_at IS NULL AND revoked_at IS NULL',[actor.id]);
+  for(const codeDigest of codeDigests)await c.query('INSERT INTO member_recovery_codes(code_digest,member_id) VALUES($1,$2)',[codeDigest,actor.id]);
+  await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,'member.recovery_codes_rotated',$1,$2)",[actor.id,{count:codes.length}]);
+ });
+ return codes;
+}
+export async function verifyRecoveryCode(browser:string,usernameValue:string,codeValue:string) {
+ assertBrowser(browser);
+ let username='';
+ try { username=normalizeUsername(usernameValue); } catch {}
+ const code=codeValue.trim();
+ const hasValidShape=/^[A-Za-z0-9_-]{43}$/.test(code);
+ const result=await tx(async c=>{
+  const bucket=(await c.query("INSERT INTO recovery_attempt_buckets(browser_digest,window_started_at,attempts) VALUES($1,now(),1) ON CONFLICT(browser_digest) DO UPDATE SET attempts=CASE WHEN recovery_attempt_buckets.window_started_at<=now()-interval '15 minutes' THEN 1 ELSE recovery_attempt_buckets.attempts+1 END,window_started_at=CASE WHEN recovery_attempt_buckets.window_started_at<=now()-interval '15 minutes' THEN now() ELSE recovery_attempt_buckets.window_started_at END RETURNING attempts",[digest(browser)])).rows[0];
+  if(Number(bucket.attempts)>8)return {kind:'limited' as const};
+  if(!username||!hasValidShape)return {kind:'invalid' as const};
+  const member=(await c.query('SELECT m.id,m.organization_id FROM members m JOIN member_usernames u ON u.member_id=m.id JOIN member_recovery_codes r ON r.member_id=m.id WHERE m.organization_id=$1 AND u.organization_id=$1 AND u.normalized_username=$2 AND r.code_digest=$3 AND r.used_at IS NULL AND r.revoked_at IS NULL AND m.active FOR UPDATE OF m,r',[config.ORGANIZATION_ID,username,digest(code)])).rows[0];
+  if(!member)return {kind:'invalid' as const};
+  await c.query('UPDATE member_recovery_codes SET revoked_at=now(),used_at=CASE WHEN code_digest=$2 THEN now() ELSE used_at END WHERE member_id=$1 AND used_at IS NULL AND revoked_at IS NULL',[member.id,digest(code)]);
+  await c.query('UPDATE member_sessions SET revoked=true WHERE member_id=$1 AND NOT revoked',[member.id]);
+  const token=randomToken();const sessionDigest=digest(token);
+  await c.query("INSERT INTO member_sessions(digest,member_id,credential_id,expires_at) VALUES($1,$2,NULL,now()+interval '12 hours')",[sessionDigest,member.id]);
+  await c.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('member',$1,$2)",[sessionDigest,member.id]);
+  await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,'member.account_recovered',$1,$2)",[member.id,{method:'one_time_recovery_code'}]);
+  return {kind:'success' as const,token,memberId:member.id,expiresInSeconds:43200};
+ });
+ if(result.kind==='limited')throw new DomainError('AUTHENTICATION_RATE_LIMITED',429);
+ if(result.kind==='invalid')throw new DomainError('RECOVERY_INVALID',401);
+ return result;
+}
 export async function cleanupWebAuthnChallenges(batchSize=500) {
  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Challenge cleanup batch must be between 1 and 1000');
  return tx(async c=>(await c.query(`WITH candidates AS (

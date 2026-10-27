@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-27T06:50:40.080Z",
+  "recordedAt": "2026-10-27T07:12:26.959Z",
   "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator",
   "providerModes": {
     "youtube": "MOCK",
@@ -25,7 +25,8 @@
     "Other branch administrator receives no member rows from branch A",
     "Other member and moderator cannot open admin control room; own history stays private",
     "Worker restart and repeated source evidence preserve notification and action uniqueness",
-    "Virtual authenticators create a new account, add a second-device passkey, then sign in discoverably"
+    "One-time recovery code restores the account without JavaScript and revokes its previous session",
+    "Virtual authenticators create an account, recover it, add a second-device passkey, then sign in discoverably"
   ],
   "screenshots": [
     "mobile-home.png",

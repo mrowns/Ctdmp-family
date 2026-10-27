@@ -1,7 +1,7 @@
 # Next coding steps — 25 October 2026
 
 1. Complete the remaining Phase 1 contracts: production identity preparation, owner-confirmed schedule configuration and real official-channel registry. Mock-only approval controls are now available; delivery reconciliation and privacy retention remain open. Provider health/freshness has a MOCK-only durable projection and admin view. Candidate approval/rejection, replacement/finish, explicit Home-session selection, audit reasons and pause/resume now work in the private fixture environment.
-2. WebAuthn passkey registration, discoverable sign-in, and development-only self-registration now work for fictional members. New accounts remain inactive until the first passkey verifies and begin with alerts off. Complete account recovery, verified WhatsApp identity linking, real-domain RP configuration, production signup/session policy and physical-device checks before any pilot. Production startup remains blocked.
+2. WebAuthn passkey registration, discoverable sign-in, development-only self-registration and one-time recovery codes now work for fictional members. New accounts remain inactive until the first passkey verifies and begin with alerts off. Complete production recovery and signup policy, verified WhatsApp identity linking, real-domain RP configuration, stronger distributed abuse controls, administrator assurance and physical-device checks before any pilot. Production startup remains blocked.
 3. Extend the interim server-rendered frontend into the proposed Next.js/Tailwind application while preserving semantic forms and server-enforced authorization. Add replay contracts, full category preferences, pagination, OpenAPI and typed clients.
 4. A disabled-by-default Meta challenge and status-only webhook contract now maps signed delivery receipts through an explicitly enabled phone/WABA registry. Remaining: inbound message processing, account ownership/onboarding, current provider-version validation, real send/reconciliation and explicit activation approval.
 5. A bounded cleanup for encrypted notification payloads and short-lived join capabilities is implemented. Remaining: encryption key rotation, retention periods for each production data class, membership interval rules, richer sensitive-read audit, campaign approval revisions, monotonic receipt processing and OUTCOME_UNKNOWN reconciliation. Mock budget and dedup tests do not establish production send correctness.
@@ -39,4 +39,8 @@ Next real integration decisions: authoritative channel IDs and schedule; account
 
 
 
-27 October update: dev-only self-registration now activates only after a verified first passkey; 30-minute pending records are cleaned up and alert preferences default off. The 30-test PostgreSQL/API suite and 19-check browser suite pass. Next authentication work is safe account recovery and verified WhatsApp linking; also complete production identity policy/domain configuration and physical-device validation before any pilot. See docs/evidence/account-passkey-2026-10-27.txt.
+27 October account-creation checkpoint: dev-only self-registration activates only after a verified first passkey; 30-minute pending records are cleaned up and alert preferences default off. At that checkpoint, the 30-test PostgreSQL/API suite and 19-check browser suite passed. Recovery codes are implemented in the following update. See docs/evidence/account-passkey-2026-10-27.txt.
+
+
+
+27 October update: local/test passkey recovery codes are implemented and verified with the full browser flow. Next authentication work is verified WhatsApp identity linking, production recovery/signup policy, stronger distributed abuse controls, real-domain RP configuration and physical-device checks. See docs/evidence/recovery-codes-2026-10-27.txt.
