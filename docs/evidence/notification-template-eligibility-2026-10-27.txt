@@ -9,8 +9,8 @@ T-MSG-03 creates planned alerts for fictional members, then disables the approve
 ## Actual verification
 
 - pnpm check: TypeScript passed; 36 PostgreSQL/API tests passed, 0 failed, 0 skipped.
-- GitHub Actions run 40492432247 passed on commit 8fe1fc7. That run includes browser checks and the earlier 35-test API suite.
-- The current change adds only integration test coverage; no browser code changed.
+- GitHub Actions run 40494100605 passed on commit e880c8d, including all 36 API/database tests and all 21 browser checks.
+- This change adds integration test coverage; no browser code changed.
 - git diff --check passed before this evidence update.
 
 ## Limits

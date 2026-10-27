@@ -38,6 +38,17 @@ try {
  await mkdir('docs/evidence/screenshots',{recursive:true});
  step='scheduled home';await page.goto(base+'/');await page.getByRole('heading',{name:'A place to stay connected.'}).waitFor();
  await page.screenshot({path:'docs/evidence/screenshots/mobile-home.png',fullPage:true});pass('No invented live state on initial home');
+ step='keyboard and narrow viewport accessibility';
+ await page.keyboard.press('Tab');
+ assert.equal(await page.evaluate(()=>document.activeElement?.textContent?.trim()),'Skip to content');
+ assert.equal(await page.evaluate(()=>getComputedStyle(document.activeElement!).outlineStyle),'solid');
+ await page.keyboard.press('Enter');assert.equal(new URL(page.url()).hash,'#main');
+ await page.setViewportSize({width:360,height:800});await page.goto(base+'/');
+ const dimensions=await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
+ assert.ok(dimensions.scroll<=dimensions.client,'Horizontal overflow at 360px: '+dimensions.scroll+' > '+dimensions.client);
+ await page.screenshot({path:'docs/evidence/screenshots/mobile-home-360.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});
+ pass('Keyboard skip link has visible focus and home fits a 360px viewport');
  step='worker confirms A';
  await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) VALUES($1,'MockVideo_A',$2,'CTDMP',true,0)",[program,channel]);
  await wait(async()=>Boolean((await pool.query("SELECT 1 FROM notifications WHERE program_id=$1 AND member_id='alice' AND state='DRY_RUN_PREPARED'",[program])).rowCount));
@@ -179,7 +190,7 @@ try {
  await passkeyPage.getByText('No test WhatsApp identity is linked.').waitFor();
  await linkAdminContext.close();pass('Member challenge, privileged mock inbound confirmation, masked identity and unlink work through no-JavaScript forms');
  await passkeyContext.close();
- const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
+ const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-home-360.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
  await writeFile('docs/evidence/browser-slice.json',JSON.stringify(evidence,null,2)+'\n');
 } catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name+': '+e.message:'UnknownError'));process.exitCode=1;}
 finally {if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await new Promise<void>(resolve=>worker!.once('exit',()=>resolve()));}await browser?.close();await server.close();await pool.end();}

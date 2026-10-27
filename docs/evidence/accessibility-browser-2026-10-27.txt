@@ -1,0 +1,16 @@
+# Keyboard and narrow-screen browser checks — 27 October 2026
+
+Environment: Lightsail development VPS; APP_ENV=test; isolated ctdmp_test; headless Chromium; JavaScript disabled for the core browser slice. No real provider traffic.
+
+## Checks added and observed
+
+- First keyboard Tab reaches the “Skip to content” link.
+- Focused skip link has a visible CSS outline.
+- Enter follows the link to the #main content anchor.
+- The public Home page has no horizontal overflow at a 360 CSS-pixel viewport.
+- Screenshot: docs/evidence/screenshots/mobile-home-360.png.
+- Full browser slice: all 22 checks passed.
+
+## Limits
+
+This focused keyboard and viewport smoke test is not a full WCAG audit. It does not cover screen readers, 200% text enlargement, every route, physical mobile devices, or full slow-network behavior.

@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-27T10:49:25.521Z",
+  "recordedAt": "2026-10-27T11:13:41.517Z",
   "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator",
   "providerModes": {
     "youtube": "MOCK",
@@ -8,6 +8,7 @@
   },
   "checks": [
     "No invented live state on initial home",
+    "Keyboard skip link has visible focus and home fits a 360px viewport",
     "GET landing creates no check-in",
     "No-JavaScript protected POST reaches A with one token-associated action",
     "Cookie sign-in and protected preference withdrawal work without JavaScript",
@@ -31,6 +32,7 @@
   ],
   "screenshots": [
     "mobile-home.png",
+    "mobile-home-360.png",
     "mobile-history.png",
     "control-room.png",
     "admin-completed.png",
