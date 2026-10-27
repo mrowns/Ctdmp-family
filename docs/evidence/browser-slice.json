@@ -1,6 +1,6 @@
 {
-  "recordedAt": "2026-10-27T06:33:32.122Z",
-  "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core journey plus JavaScript-enabled virtual WebAuthn authenticator; external browser requests intercepted",
+  "recordedAt": "2026-10-27T06:50:40.080Z",
+  "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator",
   "providerModes": {
     "youtube": "MOCK",
     "whatsapp": "DRY_RUN",
@@ -25,7 +25,7 @@
     "Other branch administrator receives no member rows from branch A",
     "Other member and moderator cannot open admin control room; own history stays private",
     "Worker restart and repeated source evidence preserve notification and action uniqueness",
-    "Virtual authenticator completes discoverable passkey registration and sign-in; server issues a revocable session"
+    "Virtual authenticators create a new account, add a second-device passkey, then sign in discoverably"
   ],
   "screenshots": [
     "mobile-home.png",
@@ -36,8 +36,7 @@
   ],
   "limitations": [
     "No real providers or public deployment",
-    "No physical-device validation",
-    "Fixture sign-in remains the local account bootstrap",
+    "No physical-device validation; recovery and production account policy remain incomplete",
     "Not full Phase 1 acceptance"
   ]
 }

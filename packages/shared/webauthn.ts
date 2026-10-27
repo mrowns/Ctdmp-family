@@ -25,10 +25,47 @@ async function requireRecentAuthentication(c:any,actor:AuthenticatedMember) {
  if(!valid)throw new DomainError('RECENT_AUTHENTICATION_REQUIRED',403);
 }
 function assertBrowser(browser:string){if(!validBrowser(browser))throw new DomainError('AUTHENTICATION_REQUIRED',401);}
-async function storeChallenge(c:any,purpose:'REGISTRATION'|'LOGIN',memberId:string|null,browser:string,challenge:string) {
+async function storeChallenge(c:any,purpose:'REGISTRATION'|'LOGIN'|'ACCOUNT_CREATION',memberId:string|null,browser:string,challenge:string) {
  const challengeId=randomToken();
  await c.query('INSERT INTO webauthn_challenges(id_digest,purpose,member_id,browser_digest,challenge,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval \'5 minutes\')',[digest(challengeId),purpose,memberId,digest(browser),challenge]);
  return challengeId;
+}
+const reservedUsernames=new Set(['admin','administrator','support','pastor','moderator','system','root','ctdmp','dunamis']);
+export function normalizeUsername(value:string) {
+ const username=value.trim().toLowerCase();
+ if(!/^[a-z0-9][a-z0-9_]{2,29}$/.test(username)||reservedUsernames.has(username))throw new DomainError('INVALID_USERNAME',422);
+ return username;
+}
+function validateDisplayName(value:string) {
+ const displayName=value.trim().normalize('NFC');
+ if(displayName.length<1||displayName.length>80||/[\r\n\u0000-\u001f]/.test(displayName))throw new DomainError('INVALID_DISPLAY_NAME',422);
+ return displayName;
+}
+export async function accountRegistrationOptions(browser:string,input:{username:string;displayName:string;label:string}) {
+ assertBrowser(browser);
+ const username=normalizeUsername(input.username);
+ const displayName=validateDisplayName(input.displayName);
+ const label=input.label.trim();
+ if(label.length<1||label.length>80||/[\r\n\u0000-\u001f]/.test(label))throw new DomainError('INVALID_CREDENTIAL_LABEL',422);
+ return tx(async c=>{
+  const recent=Number((await c.query("SELECT count(*)::int AS total FROM webauthn_challenges WHERE purpose='ACCOUNT_CREATION' AND browser_digest=$1 AND created_at>now()-interval '15 minutes'",[digest(browser)])).rows[0].total);
+  if(recent>=5)throw new DomainError('AUTHENTICATION_RATE_LIMITED',429);
+  const organization=(await c.query('SELECT id FROM organizations WHERE id=$1',[config.ORGANIZATION_ID])).rows[0];
+  if(!organization)throw new DomainError('NOT_FOUND',404);
+  const exists=(await c.query('SELECT 1 FROM member_usernames WHERE organization_id=$1 AND normalized_username=$2',[config.ORGANIZATION_ID,username])).rowCount;
+  if(exists)throw new DomainError('USERNAME_UNAVAILABLE',409);
+  const memberId='member-'+randomToken();
+  await c.query('INSERT INTO members(id,organization_id,branch_id,display_name,active) VALUES($1,$2,NULL,$3,false)',[memberId,config.ORGANIZATION_ID,displayName]);
+  const inserted=(await c.query('INSERT INTO member_usernames(member_id,organization_id,username,normalized_username) VALUES($1,$2,$3,$3) ON CONFLICT(organization_id,normalized_username) DO NOTHING RETURNING member_id',[memberId,config.ORGANIZATION_ID,username])).rowCount;
+  if(!inserted)throw new DomainError('USERNAME_UNAVAILABLE',409);
+  await c.query("INSERT INTO pending_member_registrations(member_id,expires_at) VALUES($1,now()+interval '30 minutes')",[memberId]);
+  const userHandle=randomBytes(32);
+  await c.query('INSERT INTO webauthn_users(member_id,user_handle) VALUES($1,$2)',[memberId,userHandle]);
+  const {rpID,rpName}=originConfig();
+  const options=await generateRegistrationOptions({rpName,rpID,userID:new Uint8Array(userHandle),userName:username,userDisplayName:displayName,attestationType:'none',timeout:60000,authenticatorSelection:{residentKey:'required',requireResidentKey:true,userVerification:'required'}});
+  const challengeId=await storeChallenge(c,'ACCOUNT_CREATION',memberId,browser,options.challenge);
+  return {challengeId,options};
+ });
 }
 export async function registrationOptions(actor:AuthenticatedMember,browser:string,label:string) {
  assertBrowser(browser);
@@ -55,7 +92,7 @@ export async function registrationOptions(actor:AuthenticatedMember,browser:stri
   return {challengeId,options};
  });
 }
-async function consumeChallenge(c:any,id:string,purpose:'REGISTRATION'|'LOGIN',browser:string,memberId?:string) {
+async function consumeChallenge(c:any,id:string,purpose:'REGISTRATION'|'LOGIN'|'ACCOUNT_CREATION',browser:string,memberId?:string) {
  const row=(await c.query(`SELECT * FROM webauthn_challenges WHERE id_digest=$1 AND purpose=$2 AND browser_digest=$3
   AND ($4::text IS NULL OR member_id=$4) AND consumed_at IS NULL AND expires_at>now() FOR UPDATE`,[digest(id),purpose,digest(browser),memberId??null])).rows[0];
  if(!row)throw new DomainError('WEBAUTHN_CHALLENGE_INVALID',401);
@@ -89,6 +126,38 @@ export async function verifyRegistration(actor:AuthenticatedMember,browser:strin
  });
  if(!outcome)throw new DomainError('WEBAUTHN_RESPONSE_INVALID',401);
  return {created:true};
+}
+export async function verifyAccountRegistration(browser:string,challengeId:string,response:RegistrationResponseJSON,label:string) {
+ assertBrowser(browser);
+ const cleanLabel=label.trim();
+ if(cleanLabel.length<1||cleanLabel.length>80||/[\r\n\u0000-\u001f]/.test(cleanLabel))throw new DomainError('INVALID_CREDENTIAL_LABEL',422);
+ const outcome=await tx(async c=>{
+  const challenge=await consumeChallenge(c,challengeId,'ACCOUNT_CREATION',browser);
+  const member=(await c.query(`SELECT m.id,m.organization_id,m.display_name,u.username,w.user_handle
+   FROM pending_member_registrations p JOIN members m ON m.id=p.member_id JOIN member_usernames u ON u.member_id=m.id JOIN webauthn_users w ON w.member_id=m.id
+   WHERE m.id=$1 AND m.organization_id=$2 AND NOT m.active AND p.expires_at>now() FOR UPDATE OF p,m`,[challenge.member_id,config.ORGANIZATION_ID])).rows[0];
+  if(!member)return undefined;
+  let verification;
+  try {
+   verification=await verifyRegistrationResponse({response,expectedChallenge:challenge.challenge,expectedOrigin:originConfig().origin,expectedRPID:originConfig().rpID,requireUserVerification:true});
+  } catch { return undefined; }
+  if(!verification.verified||!verification.registrationInfo.userVerified)return undefined;
+  const credential=verification.registrationInfo.credential;
+  if(credential.id!==response.id||!credential.publicKey?.byteLength)return undefined;
+  if((await c.query('SELECT 1 FROM webauthn_credentials WHERE credential_id=$1',[credential.id])).rowCount)return undefined;
+  await c.query(`INSERT INTO webauthn_credentials(credential_id,management_id,member_id,public_key,sign_count,transports,device_type,backed_up,label)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[credential.id,randomToken(),member.id,Buffer.from(credential.publicKey),credential.counter,credential.transports??[],verification.registrationInfo.credentialDeviceType,verification.registrationInfo.credentialBackedUp,cleanLabel]);
+  await c.query('UPDATE members SET active=true WHERE id=$1',[member.id]);
+  await c.query('DELETE FROM pending_member_registrations WHERE member_id=$1',[member.id]);
+  await c.query('INSERT INTO preferences(member_id,live_start) VALUES($1,false)',[member.id]);
+  const token=randomToken();const sessionDigest=digest(token);
+  await c.query(`INSERT INTO member_sessions(digest,member_id,credential_id,expires_at) VALUES($1,$2,$3,now()+interval '12 hours')`,[sessionDigest,member.id,credential.id]);
+  await c.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('member',$1,$2)",[sessionDigest,member.id]);
+  await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,'member.account_created',$1,$2)",[member.id,{method:'passkey',username:member.username}]);
+  return {token,memberId:member.id,displayName:member.display_name,username:member.username,expiresInSeconds:43200};
+ });
+ if(!outcome)throw new DomainError('WEBAUTHN_RESPONSE_INVALID',401);
+ return outcome;
 }
 export async function authenticationOptions(browser:string) {
  assertBrowser(browser);

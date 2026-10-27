@@ -14,7 +14,7 @@ import { pool, tx } from '../../../packages/db/index.ts';
 import { config } from '../../../packages/shared/config.ts';
 import { digest, randomToken } from '../../../packages/integrations/crypto.ts';
 import { currentSessionCookie, verifyCsrf } from '../../../packages/shared/csrf.ts';
-import { authenticationOptions, registrationOptions, verifyAuthentication, verifyRegistration, listCredentials, revokeCredential } from '../../../packages/shared/webauthn.ts';
+import { accountRegistrationOptions, authenticationOptions, registrationOptions, verifyAccountRegistration, verifyAuthentication, verifyRegistration, listCredentials, revokeCredential } from '../../../packages/shared/webauthn.ts';
 import type { AuthenticatedMember } from '../../../packages/shared/webauthn.ts';
 import { metaVerificationChallenge, parseMetaWhatsAppStatuses, verifyMetaSignature } from '../../../packages/integrations/meta-whatsapp-webhook.ts';
 import { mintNonce, confirmJoin, DomainError, setOptIn } from '../../../packages/shared/domain.ts';
@@ -70,6 +70,18 @@ export async function app() {
  };
  const registrationResponse=z.object({...credentialResponseBase,response:z.object({clientDataJSON:z.string().min(1).max(12000),attestationObject:z.string().min(1).max(50000),transports:z.array(z.string().max(24)).max(8).optional()}).passthrough()}).passthrough().refine(v=>v.id===v.rawId);
  const authenticationResponse=z.object({...credentialResponseBase,response:z.object({clientDataJSON:z.string().min(1).max(12000),authenticatorData:z.string().min(1).max(12000),signature:z.string().min(1).max(12000),userHandle:z.string().max(512).optional()}).passthrough()}).passthrough().refine(v=>v.id===v.rawId);
+ a.post('/api/v1/auth/passkeys/account/options',async req=>{
+  const body=z.object({csrf:z.string().length(64),username:z.string().min(1).max(80),displayName:z.string().min(1).max(120),label:z.string().min(1).max(80),acknowledgeDemo:z.literal(true)}).strict().parse(req.body);passkeyAction(req,body,'passkey-create');
+  return accountRegistrationOptions(req.cookies.web_browser??'',body);
+ });
+ a.post('/api/v1/auth/passkeys/account/verify',async(req,reply)=>{
+  const body=z.object({csrf:z.string().length(64),challengeId:z.string().regex(/^[A-Za-z0-9_-]{43}$/),label:z.string().min(1).max(80),response:registrationResponse}).strict().parse(req.body);passkeyAction(req,body,'passkey-create');
+  const session=await verifyAccountRegistration(req.cookies.web_browser??'',body.challengeId,body.response as any,body.label);
+  if(req.cookies.member_session)await pool.query('UPDATE member_sessions SET revoked=true WHERE digest=$1',[digest(req.cookies.member_session)]);
+  const secure=new URL(config.WEBAUTHN_ORIGIN).protocol==='https:';
+  reply.clearCookie('fixture_session',{path:'/'}).clearCookie('member_session',{path:'/'}).setCookie('member_session',session.token,{path:'/',httpOnly:true,secure,sameSite:'strict',maxAge:session.expiresInSeconds});
+  return {signedIn:true,redirect:'/account'};
+ });
  a.post('/api/v1/auth/passkeys/registration/options',async req=>{
   const body=z.object({csrf:z.string().length(64),label:z.string().trim().min(1).max(80)}).strict().parse(req.body);passkeyAction(req,body,'passkey-register');
   return registrationOptions((await principal(req))!,req.cookies.web_browser??'',body.label);

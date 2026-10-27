@@ -101,7 +101,7 @@ export async function dispatchOne(id:string):Promise<void> {
   await c.query("UPDATE notifications SET state='DRY_RUN_PREPARED',reason='MOCK_PROVIDER_NO_EXTERNAL_SEND' WHERE id=$1",[id]);
  });
 }
-export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number}> {
+export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number;pendingRegistrationsDeleted:number}> {
  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Retention batch size must be between 1 and 1000');
  return tx(async c=>{
   const payloads=(await c.query(`SELECT id,join_link_digest FROM notifications
@@ -140,7 +140,11 @@ export async function cleanupEphemeralData(batchSize=500,organizationId?:string)
     AND ($2::text IS NULL OR m.organization_id=$2) ORDER BY s.expires_at,s.digest FOR UPDATE OF s SKIP LOCKED LIMIT $1
   ) DELETE FROM member_sessions s USING candidates c WHERE s.digest=c.digest RETURNING s.digest`,[batchSize,organizationId??null])).rows;
   if(sessions.length)await c.query("DELETE FROM authentication_verifications WHERE session_kind='member' AND session_digest=ANY($1::text[])",[sessions.map((row:any)=>row.digest)]);
-  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length};
+  const pendingRegistrations=(await c.query(`WITH candidates AS (
+   SELECT p.member_id FROM pending_member_registrations p JOIN members m ON m.id=p.member_id WHERE p.expires_at<=now()
+    AND ($2::text IS NULL OR m.organization_id=$2) ORDER BY p.expires_at,p.member_id FOR UPDATE OF p,m SKIP LOCKED LIMIT $1
+  ) DELETE FROM members m USING candidates c WHERE m.id=c.member_id RETURNING m.id`,[batchSize,organizationId??null])).rows;
+  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length,pendingRegistrationsDeleted:pendingRegistrations.length};
  });
 }
 export async function setOptIn(member:string,value:boolean) {

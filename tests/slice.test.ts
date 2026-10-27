@@ -278,6 +278,24 @@ async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
 }
 const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+test('AUTH: new member accounts stay inactive until a passkey verifies; expired pending signups are erased',async()=>{
+ const username='p'+randomUUID().replaceAll('-','').slice(0,18);
+ const landing=await server.inject({url:'/create-account'});assert.equal(landing.statusCode,200);assert.match(landing.body,/Create account with a passkey/);
+ const csrf=landing.body.match(/data-account-create data-csrf="([a-f0-9]{64})"/)?.[1];assert.ok(csrf);
+ const browserCookie=String(landing.headers['set-cookie']).split(';')[0];
+ const cookie=browserCookie;const origin='http://127.0.0.1:'+config.PORT;
+ const payload={csrf,username,displayName:'New Fictional Member',label:'Test device',acknowledgeDemo:true};
+ const start=await server.inject({method:'POST',url:'/api/v1/auth/passkeys/account/options',headers:{cookie,origin},payload});
+ assert.equal(start.statusCode,200);assert.equal(start.json().options.authenticatorSelection.residentKey,'required');
+ const pending=(await pool.query('SELECT m.id,m.active,p.expires_at FROM member_usernames u JOIN members m ON m.id=u.member_id JOIN pending_member_registrations p ON p.member_id=m.id WHERE u.normalized_username=$1',[username])).rows[0];
+ assert.equal(pending.active,false);assert.ok(new Date(pending.expires_at).getTime()>Date.now());
+ const duplicate=await server.inject({method:'POST',url:'/api/v1/auth/passkeys/account/options',headers:{cookie,origin},payload});assert.equal(duplicate.statusCode,409);assert.equal(duplicate.json().error.code,'USERNAME_UNAVAILABLE');
+ const bad=await server.inject({method:'POST',url:'/api/v1/auth/passkeys/account/verify',headers:{cookie,origin},payload:{csrf,challengeId:start.json().challengeId,label:'Test device',response:{id:'bad',rawId:'bad',type:'public-key',response:{clientDataJSON:'eA',attestationObject:'eA'},clientExtensionResults:{}}}});
+ assert.equal(bad.statusCode,401);assert.equal((await pool.query('SELECT active FROM members WHERE id=$1',[pending.id])).rows[0].active,false);
+ await pool.query("UPDATE pending_member_registrations SET expires_at=now()-interval '1 second' WHERE member_id=$1",[pending.id]);
+ const cleanup=await cleanupEphemeralData(20,config.ORGANIZATION_ID);assert.ok(cleanup.pendingRegistrationsDeleted>=1);
+ assert.equal((await pool.query('SELECT 1 FROM members WHERE id=$1',[pending.id])).rowCount,0);
+});
 test('PRIV-001: bounded retention clears stale encrypted payloads and expired capabilities only',async()=>{
  const f=await fixture();await f.observe();
  await pool.query('UPDATE preferences SET live_start=true WHERE member_id IN (SELECT id FROM members WHERE organization_id=$1)',[f.org]);
@@ -295,7 +313,7 @@ test('PRIV-001: bounded retention clears stale encrypted payloads and expired ca
  const extraExpiredLink=digest(randomToken());
  await pool.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()-interval '1 second',false)",[extraExpiredLink,f.org,f.m,f.program]);
  const result=await cleanupEphemeralData(20,f.org);
- assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3,challengesDeleted:0,sessionsDeleted:0});
+ assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3,challengesDeleted:0,sessionsDeleted:0,pendingRegistrationsDeleted:0});
  const after=(await pool.query('SELECT id,state,payload_cipher,join_link_digest FROM notifications WHERE id=ANY($1::bigint[])',[[stale.id,prepared.id,current.id]])).rows;
  const staleAfter=after.find((row:any)=>row.id===stale.id);const preparedAfter=after.find((row:any)=>row.id===prepared.id);const currentAfter=after.find((row:any)=>row.id===current.id);
  assert.equal(staleAfter?.state,'EXPIRED');assert.equal(staleAfter?.payload_cipher,null);assert.equal(staleAfter?.join_link_digest,null);

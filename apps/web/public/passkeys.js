@@ -21,6 +21,24 @@ if(login){
   }catch(error){message(safeError(error));login.disabled=false;}
  });
 }
+const accountCreate=document.querySelector('[data-account-create]');
+if(accountCreate){
+ accountCreate.addEventListener('click',async()=>{
+  accountCreate.disabled=true;message('Waiting for your passkey…');
+  try{
+   const csrf=accountCreate.dataset.csrf;
+   const username=document.querySelector('[data-account-username]')?.value?.trim();
+   const displayName=document.querySelector('[data-account-display-name]')?.value?.trim();
+   const acknowledged=document.querySelector('[data-account-notice]')?.checked;
+   if(!acknowledged)throw new Error('Confirm the development account notice to continue.');
+   const label=document.querySelector('[data-passkey-label]')?.value?.trim()||'This device';
+   const issued=await send('/api/v1/auth/passkeys/account/options',{csrf,username,displayName,label,acknowledgeDemo:true});
+   const response=await startRegistration({optionsJSON:issued.options});
+   const result=await send('/api/v1/auth/passkeys/account/verify',{csrf,challengeId:issued.challengeId,response,label});
+   window.location.assign(result.redirect||'/account');
+  }catch(error){message(safeError(error));accountCreate.disabled=false;}
+ });
+}
 const register=document.querySelector('[data-passkey-register]');
 if(register){
  register.addEventListener('click',async()=>{

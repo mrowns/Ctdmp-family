@@ -1,0 +1,24 @@
+CTDMP Connect - Development passkey account creation
+Date: 27 October 2026
+Repository: /home/ubuntu/ctdmp-connect
+Branch: build/phase-1-browser-slice
+Environment: isolated ctdmp_test, headless Chromium, local loopback API and worker
+Provider modes: YouTube MOCK; WhatsApp DRY_RUN; outbound browser navigation intercepted.
+
+Implemented:
+- Migration 013 adds organization-scoped normalized usernames, pending registrations and the ACCOUNT_CREATION WebAuthn challenge purpose.
+- Signup creates an inactive member and pending record. The server activates it only after a verified resident passkey ceremony with user verification.
+- Pending signup expires after 30 minutes and bounded worker cleanup deletes the inactive member and dependent signup records.
+- Signup has a reserved-name policy, no branch or role grant, and inserts live_start=false; notification consent is not part of account creation.
+- The browser flow creates a fictional account, registers a first passkey, adds a second credential using an independent virtual authenticator, signs out, and completes discoverable sign-in.
+- Public app environments remain blocked; no real identities, channels, messages, or providers were used.
+
+Actual checks:
+- pnpm check: TypeScript passed; 30 PostgreSQL/API tests passed (0 failed, 0 skipped).
+- pnpm test:browser: 19 Chromium checks passed, including preview-safe joining, Stream A-to-B recovery, scoped access, worker restart/deduplication, and the complete virtual passkey signup/second-device/discoverable-login flow.
+- Structured browser evidence and screenshots: docs/evidence/browser-slice.json and docs/evidence/screenshots/.
+
+Known limitations:
+- Recovery and verified WhatsApp linking are not implemented.
+- No public account policy, production domain/RP configuration, physical-device passkey check, native ceremony, or production administrator policy.
+- This is not full Phase 1 acceptance or launch readiness.
