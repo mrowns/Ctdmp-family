@@ -86,6 +86,13 @@ try {
  step='scoped control room';const admin=await browser.newContext({viewport:{width:1280,height:900},javaScriptEnabled:false});const control=await admin.newPage();
  await control.goto(base+'/demo/sign-in');await control.getByLabel('Development access code').fill(await auth('admin-a'));await control.getByRole('button',{name:'Open demo account'}).click();
  await control.goto(base+'/admin');await control.getByRole('heading',{name:'Program control room'}).waitFor();await control.getByRole('cell',{name:'alice',exact:true}).first().waitFor();await control.screenshot({path:'docs/evidence/screenshots/control-room.png',fullPage:false});pass('Scoped admin sees permitted member and immutable stream history');
+ step='large-text administration';const adminText=await browser.newContext({viewport:{width:360,height:800}});
+ await adminText.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.fulfill({contentType:'text/html',body:'<h1>MOCK destination intercepted; no external request sent.</h1>'}));
+ await adminText.addCookies([{name:'fixture_session',value:await auth('admin-a'),url:base}]);const adminTextPage=await adminText.newPage();
+ await adminTextPage.goto(base+'/admin');await adminTextPage.addStyleTag({content:'html { font-size: 200% !important; }'});
+ const adminDimensions=await adminTextPage.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
+ assert.ok(adminDimensions.scroll<=adminDimensions.client,'Control room overflow at 200% text: '+adminDimensions.scroll+' > '+adminDimensions.client);
+ await adminTextPage.screenshot({path:'docs/evidence/screenshots/admin-360-text-200.png',fullPage:false});await adminText.close();pass('Administrator control room has no horizontal overflow at 360px with 200% text');
  step='admin candidate review';
  const reviewed=program+'-review',reviewChannel=channel+'-review';
  await pool.query("INSERT INTO programs(id,organization_id,title,local_date) SELECT $1,'demo-org','CTDMP — operator review simulation',max(local_date)+1 FROM programs",[reviewed]);
@@ -203,7 +210,7 @@ try {
  await passkeyPage.getByText('No test WhatsApp identity is linked.').waitFor();
  await linkAdminContext.close();pass('Member challenge, privileged mock inbound confirmation, masked identity and unlink work through no-JavaScript forms');
  await passkeyContext.close();
- const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-home-360.png','mobile-home-360-text-200.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
+ const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-home-360.png','mobile-home-360-text-200.png','admin-360-text-200.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
  await writeFile('docs/evidence/browser-slice.json',JSON.stringify(evidence,null,2)+'\n');
 } catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name+': '+e.message:'UnknownError'));process.exitCode=1;}
 finally {if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await new Promise<void>(resolve=>worker!.once('exit',()=>resolve()));}await browser?.close();await server.close();await pool.end();}

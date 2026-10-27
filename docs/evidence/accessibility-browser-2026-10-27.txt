@@ -7,9 +7,9 @@ Environment: Lightsail development VPS; APP_ENV=test; isolated ctdmp_test; headl
 - First keyboard Tab reaches the “Skip to content” link, which has visible focus; Enter moves to the #main content anchor.
 - The public Home page has no horizontal overflow at a 360 CSS-pixel viewport.
 - Shared page typography uses root-relative sizing so browser text enlargement affects body copy, headings, navigation, and controls.
-- Simulated 200% browser text scale at 360 CSS pixels computed body text at 34px and produced no horizontal overflow. Screenshot: docs/evidence/screenshots/mobile-home-360-text-200.png.
+- Simulated 200% browser text scale at 360 CSS pixels computed body text at 34px on Home and produced no horizontal overflow on both Home and the administrator control room. Screenshots: docs/evidence/screenshots/mobile-home-360-text-200.png and docs/evidence/screenshots/admin-360-text-200.png.
 - With JavaScript disabled and Chromium network emulation set to 400ms latency, 64KB/s download, and 32KB/s upload, the public live page loaded and the deliberate Join action resolved to fictional Stream A.
-- Full VPS browser slice: all 23 checks passed. Structured run evidence is docs/evidence/browser-slice.json.
+- Full VPS browser slice: all 24 checks passed. Structured run evidence is docs/evidence/browser-slice.json.
 
 ## Limits
 
