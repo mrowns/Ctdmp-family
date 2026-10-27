@@ -640,6 +640,37 @@ test('T-MSG-10: expired or completed live notices are suppressed, revoke links, 
  assert.equal((await pool.query('SELECT count(*)::int n FROM cost_ledger WHERE notification_id=$1',[late.id])).rows[0].n,0);
  assert.equal((await pool.query('SELECT reserved_units FROM budgets WHERE organization_id=$1',[completed.org])).rows[0].reserved_units,'0');
 });
+
+test('T-MSG-03: disabled or revised templates block prepared alerts and revoke their links',async()=>{
+ const disabled=await fixture();await disabled.observe();while(await planOne()){}
+ const first=(await pool.query("SELECT id,join_link_digest,template_id FROM notifications WHERE organization_id=$1 AND member_id=$2",[disabled.org,disabled.m])).rows[0];
+ const original=(await pool.query('SELECT approved,version FROM templates WHERE id=$1',[first.template_id])).rows[0];assert.ok(original);
+ try {
+  await pool.query('UPDATE templates SET approved=false WHERE id=$1',[first.template_id]);
+  await dispatchOne(String(first.id));
+  let row=(await pool.query('SELECT state,reason,payload_cipher,join_link_digest FROM notifications WHERE id=$1',[first.id])).rows[0];
+  assert.equal(row.state,'SUPPRESSED');assert.equal(row.reason,'TEMPLATE_BLOCKED');assert.equal(row.payload_cipher,null);assert.equal(row.join_link_digest,null);
+  assert.equal((await pool.query('SELECT revoked FROM join_links WHERE digest=$1',[first.join_link_digest])).rows[0].revoked,true);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM cost_ledger WHERE notification_id=$1',[first.id])).rows[0].n,0);
+  assert.equal((await pool.query('SELECT reserved_units FROM budgets WHERE organization_id=$1',[disabled.org])).rows[0].reserved_units,'0');
+ } finally {
+  await pool.query('UPDATE templates SET approved=$2,version=$3 WHERE id=$1',[first.template_id,original.approved,original.version]);
+ }
+ const revised=await fixture();await revised.observe();while(await planOne()){}
+ const second=(await pool.query("SELECT id,join_link_digest,template_id FROM notifications WHERE organization_id=$1 AND member_id=$2",[revised.org,revised.m])).rows[0];
+ const currentVersion=(await pool.query('SELECT version FROM templates WHERE id=$1',[second.template_id])).rows[0].version;
+ try {
+  await pool.query('UPDATE templates SET version=version+1 WHERE id=$1',[second.template_id]);
+  await dispatchOne(String(second.id));
+  const row=(await pool.query('SELECT state,reason,payload_cipher,join_link_digest FROM notifications WHERE id=$1',[second.id])).rows[0];
+  assert.equal(row.state,'SUPPRESSED');assert.equal(row.reason,'TEMPLATE_BLOCKED');assert.equal(row.payload_cipher,null);assert.equal(row.join_link_digest,null);
+  assert.equal((await pool.query('SELECT revoked FROM join_links WHERE digest=$1',[second.join_link_digest])).rows[0].revoked,true);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM cost_ledger WHERE notification_id=$1',[second.id])).rows[0].n,0);
+  assert.equal((await pool.query('SELECT reserved_units FROM budgets WHERE organization_id=$1',[revised.org])).rows[0].reserved_units,'0');
+ } finally {
+  await pool.query('UPDATE templates SET version=$2 WHERE id=$1',[second.template_id,currentVersion]);
+ }
+});
 after(async()=>{
  // Fixtures remain isolated and explicitly fictional; retained for inspection, never real member data.
  await server.close();await pool.end();

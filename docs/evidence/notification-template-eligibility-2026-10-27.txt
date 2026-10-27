@@ -1,0 +1,18 @@
+# Notification template eligibility — 27 October 2026
+
+Environment: Lightsail test suite; isolated PostgreSQL database ctdmp_test; providers MOCK/DRY_RUN. No real delivery, recipients, or charges.
+
+## Coverage added
+
+T-MSG-03 creates planned alerts for fictional members, then disables the approved mock template or changes its version before dispatch. Both cases are suppressed as TEMPLATE_BLOCKED; the encrypted personal URL is removed, the corresponding join link is revoked, and no cost-ledger entry or budget reservation is created. Template fields are restored after each case.
+
+## Actual verification
+
+- pnpm check: TypeScript passed; 36 PostgreSQL/API tests passed, 0 failed, 0 skipped.
+- GitHub Actions run 40492432247 passed on commit 8fe1fc7. That run includes browser checks and the earlier 35-test API suite.
+- The current change adds only integration test coverage; no browser code changed.
+- git diff --check passed before this evidence update.
+
+## Limits
+
+This validates template withdrawal/version drift in the mock dispatcher. It does not verify Meta template status propagation or real sending.
