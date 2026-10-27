@@ -90,8 +90,8 @@ try {
  await adminText.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.fulfill({contentType:'text/html',body:'<h1>MOCK destination intercepted; no external request sent.</h1>'}));
  await adminText.addCookies([{name:'fixture_session',value:await auth('admin-a'),url:base}]);const adminTextPage=await adminText.newPage();
  await adminTextPage.goto(base+'/admin');await adminTextPage.addStyleTag({content:'html { font-size: 200% !important; }'});
- const adminDimensions=await adminTextPage.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
- assert.ok(adminDimensions.scroll<=adminDimensions.client,'Control room overflow at 200% text: '+adminDimensions.scroll+' > '+adminDimensions.client);
+ const adminDimensions=await adminTextPage.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,offenders:[...document.querySelectorAll('body *')].filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>({tag:e.tagName.toLowerCase(),id:e.id,className:typeof e.className==='string'?e.className.slice(0,50):'',scroll:e.scrollWidth,client:e.clientWidth,right:Math.round(e.getBoundingClientRect().right)})).slice(0,12)}));
+ assert.ok(adminDimensions.scroll<=adminDimensions.client,'Control room overflow at 200% text: '+adminDimensions.scroll+' > '+adminDimensions.client+' '+JSON.stringify(adminDimensions.offenders));
  await adminTextPage.screenshot({path:'docs/evidence/screenshots/admin-360-text-200.png',fullPage:false});await adminText.close();pass('Administrator control room has no horizontal overflow at 360px with 200% text');
  step='admin candidate review';
  const reviewed=program+'-review',reviewChannel=channel+'-review';

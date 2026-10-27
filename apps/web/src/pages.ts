@@ -24,7 +24,7 @@ export function renderPage(title:string,body:string,member?:Member) {
 html { font-size: 100%; }
 :root { color-scheme: dark; --navy:#101b2e; --panel:#19283e; --cream:#fff5e2; --muted:#c2cbd9; --gold:#f2cf83; }
 * { box-sizing: border-box; }
-body { margin:0; background:var(--navy); color:var(--cream); font:1.0625rem/1.6 system-ui,sans-serif; }
+body { margin:0; background:var(--navy); color:var(--cream); font:1.0625rem/1.6 system-ui,sans-serif; overflow-wrap:anywhere; }
 a { color:var(--gold); text-underline-offset:0.25rem; overflow-wrap:anywhere; }
 a:focus-visible, button:focus-visible, input:focus-visible { outline:3px solid white; outline-offset:4px; }
 .skip { position:absolute; top:-5rem; }
