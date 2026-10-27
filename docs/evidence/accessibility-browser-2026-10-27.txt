@@ -1,17 +1,16 @@
-# Keyboard and narrow-screen browser checks — 27 October 2026
+# Keyboard, text scaling, and slow-network browser checks — 27 October 2026
 
-Environment: Lightsail development VPS; APP_ENV=test; isolated ctdmp_test; headless Chromium; JavaScript disabled for the core browser slice. No real provider traffic.
+Environment: Lightsail development VPS; APP_ENV=test; isolated ctdmp_test; headless Chromium. Core browser journeys run with JavaScript disabled. External browser requests are intercepted; no real provider traffic occurs.
 
 ## Checks added and observed
 
-- First keyboard Tab reaches the “Skip to content” link.
-- Focused skip link has a visible CSS outline.
-- Enter follows the link to the #main content anchor.
+- First keyboard Tab reaches the “Skip to content” link, which has visible focus; Enter moves to the #main content anchor.
 - The public Home page has no horizontal overflow at a 360 CSS-pixel viewport.
-- Screenshot: docs/evidence/screenshots/mobile-home-360.png.
-- Full browser slice: all 22 checks passed.
-- GitHub Actions run 40494856142 passed on commit 168c721, including all 22 browser checks.
+- Shared page typography uses root-relative sizing so browser text enlargement affects body copy, headings, navigation, and controls.
+- Simulated 200% browser text scale at 360 CSS pixels computed body text at 34px and produced no horizontal overflow. Screenshot: docs/evidence/screenshots/mobile-home-360-text-200.png.
+- With JavaScript disabled and Chromium network emulation set to 400ms latency, 64KB/s download, and 32KB/s upload, the public live page loaded and the deliberate Join action resolved to fictional Stream A.
+- Full VPS browser slice: all 23 checks passed. Structured run evidence is docs/evidence/browser-slice.json.
 
 ## Limits
 
-This focused keyboard and viewport smoke test is not a full WCAG audit. It does not cover screen readers, 200% text enlargement, every route, physical mobile devices, or full slow-network behavior.
+The text-scale check uses a browser CSS override to simulate enlarged default text; it is not a screen-reader test or a complete WCAG audit. Network emulation is a deterministic local browser test, not a real mobile carrier test. It does not cover physical devices, every route, or all offline behavior. No real video or external provider request was made.

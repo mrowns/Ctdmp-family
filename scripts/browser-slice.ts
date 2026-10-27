@@ -47,15 +47,28 @@ try {
  const dimensions=await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
  assert.ok(dimensions.scroll<=dimensions.client,'Horizontal overflow at 360px: '+dimensions.scroll+' > '+dimensions.client);
  await page.screenshot({path:'docs/evidence/screenshots/mobile-home-360.png',fullPage:true});
+ const textContext=await browser.newContext({viewport:{width:360,height:800}});
+ await textContext.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.fulfill({contentType:'text/html',body:'<h1>MOCK destination intercepted; no external request sent.</h1>'}));
+ const textPage=await textContext.newPage();await textPage.goto(base+'/');
+ await textPage.addStyleTag({content:'html { font-size: 200% !important; }'});
+ const enlarged=await textPage.evaluate(()=>({font:getComputedStyle(document.body).fontSize,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
+ assert.equal(enlarged.font,'34px');assert.ok(enlarged.scroll<=enlarged.client,'Horizontal overflow at 200% text: '+enlarged.scroll+' > '+enlarged.client);
+ await textPage.screenshot({path:'docs/evidence/screenshots/mobile-home-360-text-200.png',fullPage:true});await textContext.close();
  await page.setViewportSize({width:390,height:844});
- pass('Keyboard skip link has visible focus and home fits a 360px viewport');
+ pass('Keyboard focus, 360px layout, and 200% enlarged text remain usable without horizontal overflow');
  step='worker confirms A';
  await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) VALUES($1,'MockVideo_A',$2,'CTDMP',true,0)",[program,channel]);
  await wait(async()=>Boolean((await pool.query("SELECT 1 FROM notifications WHERE program_id=$1 AND member_id='alice' AND state='DRY_RUN_PREPARED'",[program])).rowCount));
- const n=(await pool.query("SELECT payload_cipher FROM notifications WHERE program_id=$1 AND member_id='alice'",[program])).rows[0];
+ step='slow network no-JavaScript join';const slowContext=await browser.newContext({viewport:{width:360,height:800},javaScriptEnabled:false});
+ await slowContext.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.fulfill({contentType:'text/html',body:'<h1>MOCK destination intercepted; no external request sent.</h1>'}));
+ const slowPage=await slowContext.newPage();const network=await slowContext.newCDPSession(slowPage);await network.send('Network.enable');
+ await network.send('Network.emulateNetworkConditions',{offline:false,latency:400,downloadThroughput:65536,uploadThroughput:32768,connectionType:'cellular3g'});
+ await slowPage.goto(base+'/live',{waitUntil:'domcontentloaded',timeout:30000});await slowPage.getByRole('button',{name:'Join simulated live'}).click();
+ assert.ok(slowPage.url().endsWith('MockVideo_A'));await slowContext.close();pass('No-JavaScript live join succeeds on a 400ms, 64KB/s throttled connection');
+ step='preview';const n=(await pool.query("SELECT payload_cipher FROM notifications WHERE program_id=$1 AND member_id='alice'",[program])).rows[0];
  const path=JSON.parse(decrypt(n.payload_cipher)).path;
  const count=async()=>Number((await pool.query('SELECT count(*) FROM checkin_events WHERE program_id=$1',[program])).rows[0].count);
- step='preview';await page.goto(base+path);assert.equal(await count(),0);pass('GET landing creates no check-in');
+ await page.goto(base+path);assert.equal(await count(),0);pass('GET landing creates no check-in');
  step='deliberate no-JavaScript join A';await page.getByRole('button',{name:'Watch Live'}).click();assert.ok(page.url().endsWith('MockVideo_A'));assert.equal(await count(),1);pass('No-JavaScript protected POST reaches A with one token-associated action');
  step='member sign-in';await page.goto(base+'/demo/sign-in');await page.getByLabel('Development access code').fill(await auth('alice'));await page.getByRole('button',{name:'Open demo account'}).click();await page.getByRole('heading',{name:'Hello, alice.'}).waitFor();
  step='history';await page.goto(base+'/account/history');await page.getByText('Recipient link activated; person not confirmed').first().waitFor();
@@ -190,7 +203,7 @@ try {
  await passkeyPage.getByText('No test WhatsApp identity is linked.').waitFor();
  await linkAdminContext.close();pass('Member challenge, privileged mock inbound confirmation, masked identity and unlink work through no-JavaScript forms');
  await passkeyContext.close();
- const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-home-360.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
+ const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-home-360.png','mobile-home-360-text-200.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
  await writeFile('docs/evidence/browser-slice.json',JSON.stringify(evidence,null,2)+'\n');
 } catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name+': '+e.message:'UnknownError'));process.exitCode=1;}
 finally {if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await new Promise<void>(resolve=>worker!.once('exit',()=>resolve()));}await browser?.close();await server.close();await pool.end();}

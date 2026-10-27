@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-27T11:13:41.517Z",
+  "recordedAt": "2026-10-27T11:29:05.243Z",
   "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator",
   "providerModes": {
     "youtube": "MOCK",
@@ -8,7 +8,8 @@
   },
   "checks": [
     "No invented live state on initial home",
-    "Keyboard skip link has visible focus and home fits a 360px viewport",
+    "Keyboard focus, 360px layout, and 200% enlarged text remain usable without horizontal overflow",
+    "No-JavaScript live join succeeds on a 400ms, 64KB/s throttled connection",
     "GET landing creates no check-in",
     "No-JavaScript protected POST reaches A with one token-associated action",
     "Cookie sign-in and protected preference withdrawal work without JavaScript",
@@ -33,6 +34,7 @@
   "screenshots": [
     "mobile-home.png",
     "mobile-home-360.png",
+    "mobile-home-360-text-200.png",
     "mobile-history.png",
     "control-room.png",
     "admin-completed.png",
