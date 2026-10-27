@@ -192,6 +192,37 @@ test('T-MSG-04/05: signed mock receipts are durable, idempotent, monotonic and r
  const badRequest={method:'POST' as const,url:'/webhooks/meta',headers:{'content-type':'application/json','x-hub-signature-256':'sha256=invalid'},payload:badPayload};
  assert.equal((await server.inject(badRequest)).statusCode,403);
 });
+test('MSG-002: Meta verification handshake and signed WhatsApp status callbacks are durable and scoped',async()=>{
+ const f=await fixture();const digits=randomUUID().replaceAll('-','').split('').map(ch=>String(parseInt(ch,16)%10)).join('');const phoneNumberId=digits.slice(0,16),wabaId=digits.slice(16,32);
+ await pool.query('INSERT INTO meta_whatsapp_phone_mappings(phone_number_id,waba_id,organization_id,enabled,authority_reference,verified_by,verified_at) VALUES($1,$2,$3,true,$4,$5,now())',[phoneNumberId,wabaId,f.org,'fictional test mapping',f.admin]);
+ const challenge=await server.inject({url:'/webhooks/meta/whatsapp?hub.mode=subscribe&hub.verify_token='+config.META_WEBHOOK_VERIFY_TOKEN+'&hub.challenge=challenge-value-123'});
+ assert.equal(challenge.statusCode,200);assert.equal(challenge.body,'challenge-value-123');assert.match(challenge.headers['content-type']??'',/text\/plain/);
+ const badChallenge=await server.inject({url:'/webhooks/meta/whatsapp?hub.mode=subscribe&hub.verify_token=wrong-token-value-that-is-long-enough-000000&hub.challenge=challenge-value-123'});
+ assert.equal(badChallenge.statusCode,403);
+ const messageId='wamid.'+randomUUID().replaceAll('-','');const timestamp=String(Math.floor(Date.now()/1000));
+ const payload=JSON.stringify({object:'whatsapp_business_account',entry:[{id:wabaId,changes:[{field:'messages',value:{messaging_product:'whatsapp',metadata:{display_phone_number:'+2348000000000',phone_number_id:phoneNumberId},statuses:[{id:messageId,status:'delivered',timestamp,recipient_id:'2348000000000',conversation:{id:'conversation-fixture'},pricing:{billable:true}}]}}]}]});
+ const signature='sha256='+createHmac('sha256',config.META_APP_SECRET!).update(payload).digest('hex');
+ const post=()=>server.inject({method:'POST',url:'/webhooks/meta/whatsapp',headers:{'content-type':'application/json','x-hub-signature-256':signature},payload});
+ const response=await post();assert.equal(response.statusCode,202);assert.equal(response.json().mode,'META_WEBHOOK_CONTRACT');assert.equal(response.json().events,1);
+ assert.equal((await post()).statusCode,202);
+ const eventKey='meta-whatsapp:'+phoneNumberId+':'+messageId+':delivered:'+timestamp;
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM webhook_inbox WHERE event_key=$1',[eventKey])).rows[0].n,1);
+ const inbox=(await pool.query('SELECT payload FROM webhook_inbox WHERE event_key=$1',[eventKey])).rows[0].payload;
+ assert.equal(inbox.organizationId,f.org);assert.equal(inbox.providerKey,'meta-whatsapp');assert.equal(inbox.kind,'delivered');
+ assert.equal(JSON.stringify(inbox).includes('2348000000000'),false);assert.equal(JSON.stringify(inbox).includes('display_phone_number'),false);
+ const notification=(await pool.query("INSERT INTO notifications(organization_id,program_id,member_id,purpose,channel,message_version,state,expires_at,cost_units,provider_message_id) VALUES($1,$2,$3,'LIVE_START','MOCK_WHATSAPP',1,'DRY_RUN_PREPARED',now()+interval '10 minutes',1,$4) RETURNING id",[f.org,f.program,f.m,messageId])).rows[0];
+ assert.equal(await processWebhookOne(),true);
+ const receipt=(await pool.query('SELECT * FROM provider_receipts WHERE event_key=$1',[eventKey])).rows[0];
+ assert.equal(receipt.provider_key,'meta-whatsapp');assert.equal(receipt.reconciliation_status,'MATCHED');assert.equal(receipt.notification_id,notification.id);assert.equal(receipt.status,'DELIVERED');
+ const wrongWaba=JSON.stringify({object:'whatsapp_business_account',entry:[{id:'999999999999999',changes:[{field:'messages',value:{messaging_product:'whatsapp',metadata:{phone_number_id:phoneNumberId},statuses:[{id:'wamid.unmapped',status:'sent',timestamp}]}}]}]});
+ const wrongSignature='sha256='+createHmac('sha256',config.META_APP_SECRET!).update(wrongWaba).digest('hex');
+ assert.equal((await server.inject({method:'POST',url:'/webhooks/meta/whatsapp',headers:{'content-type':'application/json','x-hub-signature-256':wrongSignature},payload:wrongWaba})).statusCode,503);
+ const inbound=JSON.stringify({object:'whatsapp_business_account',entry:[{id:wabaId,changes:[{field:'messages',value:{metadata:{phone_number_id:phoneNumberId},messages:[{id:'wamid.inbound',from:'2348000000000',text:{body:'hello'},type:'text'}]}}]}]});
+ const inboundSignature='sha256='+createHmac('sha256',config.META_APP_SECRET!).update(inbound).digest('hex');
+ assert.equal((await server.inject({method:'POST',url:'/webhooks/meta/whatsapp',headers:{'content-type':'application/json','x-hub-signature-256':inboundSignature},payload:inbound})).statusCode,422);
+ assert.equal((await server.inject({method:'POST',url:'/webhooks/meta/whatsapp',headers:{'content-type':'application/json','x-hub-signature-256':'sha256='+'0'.repeat(64)},payload:payload})).statusCode,403);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM webhook_inbox WHERE event_key LIKE $1',[`meta-whatsapp:${phoneNumberId}:%`])).rows[0].n,1);
+});
 test('T-JOIN security: source revocation immediately blocks resolver',async()=>{
  const f=await fixture();await f.observe();const token=await f.join();const browser=randomToken();const nonce=await mintNonce(token,browser);
  await pool.query('UPDATE official_channels SET approved=false WHERE id=$1',[f.channel]);

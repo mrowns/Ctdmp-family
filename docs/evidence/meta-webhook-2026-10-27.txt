@@ -1,0 +1,33 @@
+CTDMP Meta WhatsApp webhook contract — 2026-10-27
+
+Environment: private Lightsail development host. Provider mode remains MOCK, outbound sending is disabled, `META_WEBHOOK_ENABLED` defaults to false, and the phone/WABA mapping table has no configured production mapping. Test-only app secret and verify-token strings are injected by the isolated test runner and are not credentials. No real Meta account, external callback, member data, message, or charge was used.
+
+Implemented:
+- GET `/webhooks/meta/whatsapp` verifies `hub.mode`, configured verify token, and echoes `hub.challenge` as plain text.
+- POST verifies `X-Hub-Signature-256` over the original request bytes using constant-time comparison.
+- The status-only parser accepts the WhatsApp Business Account envelope, verifies its `messaging_product`, phone-number ID, WABA ID, provider message ID, status, timestamp and optional safe error code.
+- Each status must match an enabled, evidence-backed phone/WABA mapping. All mappings in a batch are checked before the transaction inserts any normalized receipt event.
+- Normalized events omit recipient/display phone numbers and raw provider JSON. Stable event keys make duplicate callbacks idempotent; the existing worker reconciles receipts as `meta-whatsapp`.
+- Inbound user messages and unsupported webhook fields return 422. They are not acknowledged as successfully processed; inbound intent handling remains unimplemented.
+- Migration 011 was applied to development and isolated test databases.
+
+Verification:
+- TypeScript passed.
+- PostgreSQL/API suite: 29 passed, 0 failed, 0 skipped.
+- Chromium suite: 18 passed with JavaScript disabled; external requests intercepted.
+- The new test covers challenge success/wrong token, valid and invalid signatures, duplicate callback deduplication, phone/WABA mismatch, normalized storage without recipient number, receipt reconciliation, and inbound-message rejection.
+- An earlier run found the test fixture reused one phone-number ID across persistent test runs. The fixture now generates a unique fictional numeric ID; the final full suite passed.
+- The API and worker restarted and are active. Loopback liveness returned `{"status":"ok","mode":"MOCK"}` and readiness returned `{"status":"ready","scope":"database-only"}`. The first immediate API probe raced startup; the retry passed. The disabled Meta GET route returned 404 as configured.
+- `git diff --check` passed after documentation updates.
+
+Actual verification commands from `/home/ubuntu/ctdmp-connect`:
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs packages/db/migrate.ts`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/typescript/bin/tsc --noEmit`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs scripts/test.ts`
+- `PATH=/home/ubuntu/.local/node/bin:/home/ubuntu/ctdmp-connect/node_modules/.bin:$PATH /home/ubuntu/.local/node/bin/node node_modules/tsx/dist/cli.mjs scripts/test.ts --browser`
+
+The SSH command environment does not expose `pnpm`; checks used the Node 24 binary already configured for the systemd services and repository-installed TypeScript/tsx programs. `scripts/test.ts` sets test mode, isolated test database, and synthetic test-only Meta values for its child process.
+
+Limits: this is a webhook status-contract slice only. Account ownership/onboarding, mapping administration, inbound message persistence/intent handling, provider-version compatibility against the actual account, sender integration, template governance, outcome-unknown reconciliation, real delivery receipts and production activation remain incomplete. Do not set the enable flag or configure a mapping until those launch gates are reviewed.
+
+Provider schema reference: Meta's [official WhatsApp Cloud API collection](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api?entity=request-13382743-ba924e99-3d98-4954-b4e3-73a519939c33), reviewed 2026-10-27.

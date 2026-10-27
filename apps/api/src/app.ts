@@ -7,9 +7,10 @@ import { currentProgram } from '../../../packages/shared/programs.ts';
 import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval, setProgramSchedule } from '../../../packages/shared/administration.ts';
 import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { registerPages, renderPage } from '../../web/src/pages.ts';
-import { pool } from '../../../packages/db/index.ts';
+import { pool, tx } from '../../../packages/db/index.ts';
 import { config } from '../../../packages/shared/config.ts';
 import { digest, randomToken } from '../../../packages/integrations/crypto.ts';
+import { metaVerificationChallenge, parseMetaWhatsAppStatuses, verifyMetaSignature } from '../../../packages/integrations/meta-whatsapp-webhook.ts';
 import { mintNonce, confirmJoin, DomainError, setOptIn } from '../../../packages/shared/domain.ts';
 export async function app() {
  const a=Fastify({logger:false,bodyLimit:65536,trustProxy:false});
@@ -118,6 +119,38 @@ export async function app() {
  await a.register(async hook=>{
   hook.removeContentTypeParser('application/json');
   hook.addContentTypeParser('application/json',{parseAs:'buffer'},(_req,body,done)=>done(null,body));
+  hook.get('/webhooks/meta/whatsapp',async(req,reply)=>{
+   if(config.META_WEBHOOK_ENABLED!=='true'||!config.META_WEBHOOK_VERIFY_TOKEN)return reply.code(404).send();
+   const challenge=metaVerificationChallenge(req.query,config.META_WEBHOOK_VERIFY_TOKEN);
+   if(!challenge)return reply.code(403).send();
+   return reply.type('text/plain; charset=utf-8').send(challenge);
+  });
+  hook.post('/webhooks/meta/whatsapp',async(req,reply)=>{
+   const appSecret=config.META_APP_SECRET;
+   if(config.META_WEBHOOK_ENABLED!=='true'||!appSecret)throw new DomainError('META_WEBHOOK_DISABLED',503);
+   const raw=req.body as Buffer;
+   const signature=req.headers['x-hub-signature-256'];
+   if(typeof signature!=='string'||!verifyMetaSignature(raw,signature,appSecret))throw new DomainError('INVALID_SIGNATURE',403);
+   let events;
+   try { events=parseMetaWhatsAppStatuses(raw); }
+   catch { throw new DomainError('UNSUPPORTED_META_EVENT',422); }
+   await tx(async c=>{
+    const phoneIds=[...new Set(events.map(event=>event.phoneNumberId))];
+    const mappings=(await c.query('SELECT phone_number_id,waba_id,organization_id FROM meta_whatsapp_phone_mappings WHERE phone_number_id=ANY($1::text[]) AND enabled FOR SHARE',[phoneIds])).rows;
+    const byPhone=new Map(mappings.map((mapping:any)=>[mapping.phone_number_id,mapping]));
+    for(const event of events) {
+     const mapping=byPhone.get(event.phoneNumberId);
+     if(!mapping||mapping.waba_id!==event.wabaId)throw new DomainError('META_PHONE_MAPPING_REQUIRED',503);
+    }
+    for(const event of events) {
+     const mapping=byPhone.get(event.phoneNumberId)!;
+     const eventKey='meta-whatsapp:'+event.phoneNumberId+':'+event.messageId+':'+event.kind+':'+event.timestamp;
+     const payload={organizationId:mapping.organization_id,providerKey:'meta-whatsapp',id:digest(eventKey),kind:event.kind,messageId:event.messageId,timestamp:event.timestamp,...(event.errorCode?{errorCode:event.errorCode}:{})};
+     await c.query('INSERT INTO webhook_inbox(event_key,payload) VALUES($1,$2) ON CONFLICT DO NOTHING',[eventKey,payload]);
+    }
+   });
+   return reply.code(202).send({accepted:true,mode:'META_WEBHOOK_CONTRACT',events:events.length});
+  });
   hook.post('/webhooks/meta',async(req,reply)=>{
    const raw=req.body as Buffer;
    const signature=req.headers['x-hub-signature-256'];

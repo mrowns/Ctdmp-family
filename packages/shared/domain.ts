@@ -142,6 +142,7 @@ export async function setOptIn(member:string,value:boolean) {
 }
 const mockReceiptSchema=z.object({
  organizationId:z.string().min(1).max(100),
+ providerKey:z.enum(['meta-mock','meta-whatsapp']).optional().default('meta-mock'),
  id:z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/),
  kind:z.enum(['sent','failed','delivered','read']),
  messageId:z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/),
@@ -175,7 +176,7 @@ export async function processWebhookOne():Promise<boolean> {
   const status=receiptStatus[event.kind];
   const eventAt=event.timestamp?new Date(Number(event.timestamp)*1000):new Date(inbox.received_at);
   const notification=(await c.query('SELECT * FROM notifications WHERE organization_id=$1 AND provider_message_id=$2 FOR UPDATE',[event.organizationId,event.messageId])).rows[0];
-  const inserted=(await c.query("INSERT INTO provider_receipts(event_key,organization_id,provider_key,provider_message_id,status,provider_event_at,received_at,notification_id,reconciliation_status,safe_error_code) VALUES($1,$2,'meta-mock',$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(event_key) DO NOTHING RETURNING event_key",[inbox.event_key,event.organizationId,event.messageId,status,eventAt,inbox.received_at,notification?.id??null,notification?'MATCHED':'UNMATCHED',event.errorCode??null])).rowCount;
+  const inserted=(await c.query("INSERT INTO provider_receipts(event_key,organization_id,provider_key,provider_message_id,status,provider_event_at,received_at,notification_id,reconciliation_status,safe_error_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(event_key) DO NOTHING RETURNING event_key",[inbox.event_key,event.organizationId,event.providerKey,event.messageId,status,eventAt,inbox.received_at,notification?.id??null,notification?'MATCHED':'UNMATCHED',event.errorCode??null])).rowCount;
   if(inserted&&notification)await applyReceiptProjection(c,notification,status,eventAt);
   await c.query('UPDATE webhook_inbox SET processed=true,processed_at=now(),processing_error=NULL WHERE event_key=$1',[inbox.event_key]);
   return true;
