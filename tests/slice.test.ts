@@ -618,6 +618,28 @@ test('OPS-001: planned notifications are rebuilt after isolated BullMQ state los
  }
 });
 
+
+test('T-MSG-10: expired or completed live notices are suppressed, revoke links, and reserve no budget',async()=>{
+ const expired=await fixture();await expired.observe();while(await planOne()){}
+ const stale=(await pool.query("SELECT id,join_link_digest FROM notifications WHERE organization_id=$1 AND member_id=$2",[expired.org,expired.m])).rows[0];
+ assert.ok(stale.join_link_digest);
+ await pool.query("UPDATE notifications SET expires_at=now()-interval '1 second' WHERE id=$1",[stale.id]);
+ await dispatchOne(String(stale.id));
+ let row=(await pool.query('SELECT state,reason,payload_cipher,join_link_digest FROM notifications WHERE id=$1',[stale.id])).rows[0];
+ assert.equal(row.state,'SUPPRESSED');assert.equal(row.reason,'EXPIRED_OR_NOT_LIVE');assert.equal(row.payload_cipher,null);assert.equal(row.join_link_digest,null);
+ assert.equal((await pool.query('SELECT revoked FROM join_links WHERE digest=$1',[stale.join_link_digest])).rows[0].revoked,true);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM cost_ledger WHERE notification_id=$1',[stale.id])).rows[0].n,0);
+ assert.equal((await pool.query('SELECT reserved_units FROM budgets WHERE organization_id=$1',[expired.org])).rows[0].reserved_units,'0');
+ const completed=await fixture();await completed.observe();while(await planOne()){}
+ const late=(await pool.query("SELECT id,join_link_digest FROM notifications WHERE organization_id=$1 AND member_id=$2",[completed.org,completed.m])).rows[0];
+ await pool.query("UPDATE programs SET state='COMPLETED',revision=revision+1 WHERE id=$1",[completed.program]);
+ await dispatchOne(String(late.id));
+ row=(await pool.query('SELECT state,reason,payload_cipher,join_link_digest FROM notifications WHERE id=$1',[late.id])).rows[0];
+ assert.equal(row.state,'SUPPRESSED');assert.equal(row.reason,'EXPIRED_OR_NOT_LIVE');assert.equal(row.payload_cipher,null);assert.equal(row.join_link_digest,null);
+ assert.equal((await pool.query('SELECT revoked FROM join_links WHERE digest=$1',[late.join_link_digest])).rows[0].revoked,true);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM cost_ledger WHERE notification_id=$1',[late.id])).rows[0].n,0);
+ assert.equal((await pool.query('SELECT reserved_units FROM budgets WHERE organization_id=$1',[completed.org])).rows[0].reserved_units,'0');
+});
 after(async()=>{
  // Fixtures remain isolated and explicitly fictional; retained for inspection, never real member data.
  await server.close();await pool.end();

@@ -1,0 +1,17 @@
+# Notification freshness policy — 27 October 2026
+
+Environment: Lightsail test suite; isolated PostgreSQL database ctdmp_test; providers MOCK/DRY_RUN. No real delivery, recipients, or charges.
+
+## Coverage added
+
+T-MSG-10 prepares two fictional notifications, then makes one usefulness deadline expire and completes the other program before dispatch. In both cases the sender suppresses the job, clears its encrypted personal URL, revokes the corresponding join capability, writes no cost-ledger entry, and leaves the organization budget unreserved.
+
+## Actual verification
+
+- pnpm check: TypeScript passed; 35 PostgreSQL/API tests passed, 0 failed, 0 skipped.
+- git diff --check passed before the evidence update.
+- Browser code did not change in this slice; the most recent browser run passed all 21 checks in GitHub Actions run 40491798870 on commit b146aa6.
+
+## Limits
+
+This validates freshness and final-session-state gates in the mock sender. It does not validate Meta send timing, delivery billing, ambiguous provider outcomes, or real-world message recall.
