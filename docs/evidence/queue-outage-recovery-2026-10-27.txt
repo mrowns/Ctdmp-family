@@ -1,0 +1,16 @@
+# Queue outage recovery check — 27 October 2026
+
+Environment: isolated ctdmp_test PostgreSQL database and a deterministic in-memory BullMQ adapter. No production queue, provider, or member data was used.
+
+## OPS-002 scenario and result
+
+- Created two fictional, opted-in recipients with durable PLANNED notifications.
+- Injected a broker failure after the first stable notification job ID was accepted but before the second enqueue completed.
+- Confirmed the enqueue cycle reported BROKER_UNAVAILABLE and both notification rows remained PLANNED in PostgreSQL.
+- Restored the simulated broker and reran the bounded PostgreSQL scan. Both stable job IDs were present, including the first accepted job without duplication.
+- Repeated recovery and confirmed the mock queue still held exactly two logical job IDs.
+- VPS `pnpm check`: TypeScript passed; 37/37 PostgreSQL/API tests passed, including OPS-001 and OPS-002.
+
+## Limits
+
+This deterministic adapter test checks application behavior around a partial queue outage. It does not stop or fail over the Redis server, exercise real BullMQ reconnection, or prove production availability. A complete isolated Redis host outage/failover drill remains open. PostgreSQL remains the durable source of notification work.

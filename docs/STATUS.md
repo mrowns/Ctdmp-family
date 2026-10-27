@@ -9,6 +9,12 @@ A new isolated Redis/BullMQ integration case creates two pending notifications, 
 Queue-recovery verification on the VPS: pnpm check passed TypeScript and 34/34 PostgreSQL/API tests; pnpm test:browser passed all 21 Chromium checks. After restarting ctdmp-worker, systemd reported active; API liveness returned MOCK/ok and readiness returned database-only/ready. git diff --check passed. This simulates loss of BullMQ queue state under a unique test prefix; it is not a Redis server outage or a production failover drill. No real provider traffic, charges, or member data were used.
 
 
+## VPS continuation — queue interruption recovery
+
+Added OPS-002 fault injection for a queue outage after a partial enqueue. The deterministic queue adapter accepts the first stable job ID, rejects the second, and leaves both durable notifications PLANNED in PostgreSQL. When the simulated broker is restored, another bounded database scan reconstructs both logical jobs; repeating it does not duplicate either ID. The VPS pnpm check passed TypeScript and 37/37 PostgreSQL/API tests. Evidence: docs/evidence/queue-outage-recovery-2026-10-27.txt.
+
+This test does not stop Redis or prove real BullMQ reconnect/failover. A complete isolated Redis server outage/failover drill remains open; production queue availability is not claimed.
+
 ## VPS continuation — notification freshness
 
 Added T-MSG-10 integration coverage for an alert whose usefulness deadline has passed and a notification whose program has completed. Both are suppressed before preparation, their encrypted personal URL is cleared and associated join link revoked, and no cost-ledger entry or budget reservation is created. The VPS pnpm check passed TypeScript and 35/35 PostgreSQL/API tests. Browser code did not change in this slice; the previous 21-check browser run remains the latest browser evidence. This does not exercise a real Meta sender.

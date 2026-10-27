@@ -618,6 +618,24 @@ test('OPS-001: planned notifications are rebuilt after isolated BullMQ state los
  }
 });
 
+test('OPS-002: a queue outage after partial enqueue leaves PostgreSQL work recoverable',async()=>{
+ const f=await fixture();await setOptIn(f.other,true);await f.observe();while(await planOne()){}
+ const planned=(await pool.query("SELECT id FROM notifications WHERE organization_id=$1 AND state='PLANNED' ORDER BY id",[f.org])).rows;
+ assert.equal(planned.length,2);
+ const jobs=new Set<string>();let brokerOnline=true;const failingId=String(planned[1].id);let failOnce=true;
+ const queue={add:async(_name:string,data:{id:string},options:{jobId:string})=>{
+  if(!brokerOnline)throw new Error('BROKER_UNAVAILABLE');
+  if(data.id===failingId&&failOnce){failOnce=false;brokerOnline=false;throw new Error('BROKER_UNAVAILABLE');}
+  jobs.add(options.jobId);
+ }};
+ await assert.rejects(enqueuePendingNotifications(queue,100,f.org),/BROKER_UNAVAILABLE/);
+ assert.deepEqual([...jobs],['notification-'+planned[0].id]);
+ assert.equal((await pool.query("SELECT count(*)::int n FROM notifications WHERE organization_id=$1 AND state='PLANNED'",[f.org])).rows[0].n,2);
+ brokerOnline=true;const recovered=await enqueuePendingNotifications(queue,100,f.org);assert.deepEqual(recovered,{scanned:2,submitted:2});
+ assert.equal(jobs.size,2);await enqueuePendingNotifications(queue,100,f.org);assert.equal(jobs.size,2);
+ assert.equal((await pool.query("SELECT count(*)::int n FROM notifications WHERE organization_id=$1 AND state='PLANNED'",[f.org])).rows[0].n,2);
+});
+
 
 test('T-MSG-10: expired or completed live notices are suppressed, revoke links, and reserve no budget',async()=>{
  const expired=await fixture();await expired.observe();while(await planOne()){}
