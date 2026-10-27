@@ -101,7 +101,7 @@ export async function dispatchOne(id:string):Promise<void> {
   await c.query("UPDATE notifications SET state='DRY_RUN_PREPARED',reason='MOCK_PROVIDER_NO_EXTERNAL_SEND' WHERE id=$1",[id]);
  });
 }
-export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number;pendingRegistrationsDeleted:number;recoveryAttemptsDeleted:number}> {
+export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number;pendingRegistrationsDeleted:number;recoveryAttemptsDeleted:number;whatsappChallengesDeleted:number}> {
  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Retention batch size must be between 1 and 1000');
  return tx(async c=>{
   const payloads=(await c.query(`SELECT id,join_link_digest FROM notifications
@@ -145,7 +145,12 @@ export async function cleanupEphemeralData(batchSize=500,organizationId?:string)
     AND ($2::text IS NULL OR m.organization_id=$2) ORDER BY p.expires_at,p.member_id FOR UPDATE OF p,m SKIP LOCKED LIMIT $1
   ) DELETE FROM members m USING candidates c WHERE m.id=c.member_id RETURNING m.id`,[batchSize,organizationId??null])).rows;
   const recoveryAttempts=(await c.query("WITH candidates AS (SELECT browser_digest FROM recovery_attempt_buckets WHERE window_started_at<now()-interval '1 day' ORDER BY window_started_at,browser_digest FOR UPDATE SKIP LOCKED LIMIT $1) DELETE FROM recovery_attempt_buckets b USING candidates x WHERE b.browser_digest=x.browser_digest RETURNING b.browser_digest",[batchSize])).rowCount??0;
-  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length,pendingRegistrationsDeleted:pendingRegistrations.length,recoveryAttemptsDeleted:recoveryAttempts};
+  const whatsappChallenges=(await c.query(`WITH candidates AS (
+   SELECT w.challenge_digest FROM whatsapp_link_challenges w WHERE (w.expires_at<=now() OR w.consumed_at<=now()-interval '10 minutes')
+    AND ($2::text IS NULL OR w.organization_id=$2)
+   ORDER BY w.expires_at,w.challenge_digest FOR UPDATE SKIP LOCKED LIMIT $1
+  ) DELETE FROM whatsapp_link_challenges w USING candidates c WHERE w.challenge_digest=c.challenge_digest RETURNING w.challenge_digest`,[batchSize,organizationId??null])).rows;
+  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length,pendingRegistrationsDeleted:pendingRegistrations.length,recoveryAttemptsDeleted:recoveryAttempts,whatsappChallengesDeleted:whatsappChallenges.length};
  });
 }
 export async function setOptIn(member:string,value:boolean) {

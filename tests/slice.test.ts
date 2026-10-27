@@ -362,7 +362,7 @@ test('PRIV-001: bounded retention clears stale encrypted payloads and expired ca
  const extraExpiredLink=digest(randomToken());
  await pool.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()-interval '1 second',false)",[extraExpiredLink,f.org,f.m,f.program]);
  const result=await cleanupEphemeralData(20,f.org);
- assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3,challengesDeleted:0,sessionsDeleted:0,pendingRegistrationsDeleted:0,recoveryAttemptsDeleted:0});
+ assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3,challengesDeleted:0,sessionsDeleted:0,pendingRegistrationsDeleted:0,recoveryAttemptsDeleted:0,whatsappChallengesDeleted:0});
  const after=(await pool.query('SELECT id,state,payload_cipher,join_link_digest FROM notifications WHERE id=ANY($1::bigint[])',[[stale.id,prepared.id,current.id]])).rows;
  const staleAfter=after.find((row:any)=>row.id===stale.id);const preparedAfter=after.find((row:any)=>row.id===prepared.id);const currentAfter=after.find((row:any)=>row.id===current.id);
  assert.equal(staleAfter?.state,'EXPIRED');assert.equal(staleAfter?.payload_cipher,null);assert.equal(staleAfter?.join_link_digest,null);

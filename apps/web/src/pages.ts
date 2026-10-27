@@ -11,6 +11,7 @@ import { digest, randomToken, decrypt } from '../../../packages/integrations/cry
 import { DomainError, setOptIn } from '../../../packages/shared/domain.ts';
 import { currentSessionCookie, csrfToken, verifyCsrf } from '../../../packages/shared/csrf.ts';
 import { createRecoveryCodes, listCredentials, verifyRecoveryCode } from '../../../packages/shared/webauthn.ts';
+import { listWhatsAppIdentities, processMockWhatsAppInbound, startWhatsAppLinkChallenge, unlinkWhatsAppIdentity } from '../../../packages/shared/whatsapp-linking.ts';
 
 type Member={id:string;organization_id:string;display_name:string;branch_id:string|null;session_digest:string;session_kind?:'fixture'|'member';credential_id?:string|null};
 type Principal=(req:any,required?:boolean)=>Promise<Member|undefined>;
@@ -126,13 +127,34 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
  a.get('/account/security',async(req,reply)=>{
   const m=(await principal(req))!;
   const credentials=await listCredentials(m.id);
+  const whatsapp=await listWhatsAppIdentities(m.id,m.organization_id);
   const registerCsrf=csrf(req,reply,'passkey-register');
   const recoveryCsrf=csrf(req,reply,'recovery-codes');
+  const whatsappCsrf=csrf(req,reply,'whatsapp-link-start');
   const rows=credentials.map(c=>`<article class=card><h2>${escapeHtml(c.label)}</h2><dl><dt>Type</dt><dd>${escapeHtml(c.deviceType==='multiDevice'?'Synced passkey':'Device passkey')}</dd><dt>Added</dt><dd>${date(c.createdAt)}</dd><dt>Last used</dt><dd>${date(c.lastUsedAt)}</dd><dt>Backup state</dt><dd>${c.backedUp?'Backed up by authenticator':'Not reported as backed up'}</dd></dl>${credentials.length>1?`<button type=button class=secondary data-passkey-revoke="${escapeHtml(c.id)}" data-csrf="${escapeHtml(csrf(req,reply,'passkey-revoke:'+c.id))}">Remove this passkey</button>`:'<p class=muted>Keep at least one active passkey so you can sign in again.</p>'}</article>`).join('');
   const recoverySection='<section class=card><h2>Recovery codes</h2><p>Generate a new set of eight single-use codes. This replaces and invalidates any older set.</p><form method=post action=/account/recovery-codes>'+field(recoveryCsrf)+'<button class=secondary>Generate recovery codes</button></form></section>';
+  const whatsappRows=whatsapp.map(identity=>'<article class=card><h3>Mock WhatsApp identity</h3><p>'+escapeHtml(identity.maskedDestination)+' · simulated confirmation only</p><form method=post action="/account/whatsapp/unlink/'+encodeURIComponent(identity.id)+'">'+field(csrf(req,reply,'whatsapp-unlink:'+identity.id))+'<button class=secondary>Unlink this test identity</button></form></article>').join('');
+  const whatsappSection='<section class=card><h2>WhatsApp account linking</h2><p><strong>MOCK ONLY.</strong> No WhatsApp message is sent and no real phone ownership is verified. Use only a fictitious reserved +1 555-01xx test number (for example +1 202-555-0123). Starting or unlinking requires a recent sign-in.</p><form method=post action=/account/whatsapp/link-start>'+field(whatsappCsrf)+'<label for=mock-whatsapp-number>Fictitious test number</label><input id=mock-whatsapp-number name=phone type=text inputmode=tel autocomplete=off placeholder="+12025550123" pattern="\+1[2-9][0-9]{2}55501[0-9]{2}" required><button class=secondary>Prepare mock link challenge</button></form>'+ (whatsappRows||'<p>No test WhatsApp identity is linked.</p>') +'</section>';
   const recoveredBanner=(req.query as any).recovered==='1'?'<p class=notice role=status>Access restored. Add a new passkey if you lost a device, then create a fresh set of recovery codes.</p>':'';
-  const body=`<span class=eyebrow>Account security</span><h1>Passkeys</h1><p>Passkeys use your device or security key. CTDMP Connect stores a public key and authenticator metadata; the private key stays with your authenticator.</p>${recoveredBanner}${recoverySection}<section class=card><label for=passkey-label>Name this passkey</label><input id=passkey-label data-passkey-label type=text maxlength=80 value="This device" autocomplete=off><button type=button data-passkey-register data-csrf="${escapeHtml(registerCsrf)}">Add a passkey</button><p data-passkey-status role=status aria-live=polite></p><p class=muted>Adding a passkey requires a recent sign-in and a browser with WebAuthn support. If you signed in with a fixture account, this is development-only authentication.</p></section><h2>Registered passkeys</h2>${rows||'<section class=card><p>No passkeys are registered for this account yet.</p></section>'}<script type=module src=/assets/passkeys.js></script>`;
+  const body=`<span class=eyebrow>Account security</span><h1>Passkeys</h1><p>Passkeys use your device or security key. CTDMP Connect stores a public key and authenticator metadata; the private key stays with your authenticator.</p>${recoveredBanner}${recoverySection}${whatsappSection}<section class=card><label for=passkey-label>Name this passkey</label><input id=passkey-label data-passkey-label type=text maxlength=80 value="This device" autocomplete=off><button type=button data-passkey-register data-csrf="${escapeHtml(registerCsrf)}">Add a passkey</button><p data-passkey-status role=status aria-live=polite></p><p class=muted>Adding a passkey requires a recent sign-in and a browser with WebAuthn support. If you signed in with a fixture account, this is development-only authentication.</p></section><h2>Registered passkeys</h2>${rows||'<section class=card><p>No passkeys are registered for this account yet.</p></section>'}<script type=module src=/assets/passkeys.js></script>`;
   return html(reply,'Passkeys',body,m);
+ });
+ a.post('/account/whatsapp/link-start',async(req,reply)=>{
+  protect(req,'whatsapp-link-start');
+  const body=z.object({csrf:z.string(),phone:z.string().min(1).max(40)}).strict().parse(req.body);
+  const m=(await principal(req))!;
+  const actor={...m,session_kind:m.session_kind??'fixture',credential_id:m.credential_id??null};
+  const started=await startWhatsAppLinkChallenge(actor,req.cookies.web_browser??'',body.phone);
+  const content='<section class=card><span class=eyebrow>Mock challenge · expires in 10 minutes</span><h1>Test link challenge prepared</h1><p>This is a local simulation. Nothing was sent to WhatsApp and this does not verify a real phone account.</p><dl><dt>Challenge</dt><dd><code>'+escapeHtml(started.challenge)+'</code></dd><dt>Mock confirmation code</dt><dd><code>'+escapeHtml(started.code)+'</code></dd><dt>Test sender</dt><dd>'+escapeHtml(body.phone)+'</dd></dl><p>In the control room, a recently authenticated demo administrator can submit these values in the MOCK inbound simulator.</p><p><a href=/account/security>Return to account security</a></p></section>';
+  return reply.header('Cache-Control','no-store, private').header('Referrer-Policy','no-referrer').type('text/html').send(renderPage('Mock WhatsApp link challenge',content,m));
+ });
+ a.post('/account/whatsapp/unlink/:id',async(req,reply)=>{
+  const id=z.object({id:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).parse(req.params).id;
+  protect(req,'whatsapp-unlink:'+id);
+  const m=(await principal(req))!;
+  const actor={...m,session_kind:m.session_kind??'fixture',credential_id:m.credential_id??null};
+  await unlinkWhatsAppIdentity(actor,id);
+  return reply.code(303).header('Location','/account/security').send();
  });
  a.get('/account/history',async(req,reply)=>{
   const m=(await principal(req))!;
@@ -162,6 +184,10 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
   const providerFresh=providerAge!==null&&providerAge>=0&&providerAge<=120000;
   body+='<section class=card><h2>YouTube observation health</h2><p>Provider mode: MOCK. This reflects fictional observation processing only.</p>'+(providerHealth?'<p>Last recorded result: '+label(providerHealth.status)+' · '+date(providerHealth.last_attempt_at)+'</p><p>Freshness: '+(providerFresh?'within the two-minute evidence window':'stale or timestamp unavailable')+'.</p><p>Consecutive failed observations: '+escapeHtml(providerHealth.consecutive_failures)+'. '+(providerHealth.last_error_code?'Last safe error code: '+label(providerHealth.last_error_code)+'.':'')+'</p>':'<p>Status: unknown. No provider observation has been recorded.</p>')+'<p class=muted>This status does not confirm that a program is live. Provider outages never change program state by themselves.</p></section>';
   if((canManage||canSend)&&!recent)body+='<p class=notice>Sign in again before changing programs or sending settings. Administrative verification lasts 15 minutes. <a href=/demo/sign-in>Sign in again</a></p>';
+  const mockLinkStatus=(req.query as any).mockWhatsApp;
+  if(mockLinkStatus==='verified')body+='<p class=notice role=status>The mock inbound challenge was accepted. The member can view the masked test identity in account security. No real WhatsApp identity was verified.</p>';
+  if(mockLinkStatus==='rejected')body+='<p class=notice role=status>The mock inbound attempt was not accepted. Check the challenge, reserved test sender and code, or prepare a new challenge.</p>';
+  if(canDemo&&recent)body+='<section class=card><h2>MOCK inbound WhatsApp simulator</h2><p>This privileged local-only simulator stands in for a provider webhook. It makes no outbound request and proves no real phone ownership. Accepts only reserved fictitious test numbers.</p><form method=post action=/admin/demo/whatsapp-inbound>'+field(csrf(req,reply,'mock-whatsapp-inbound'))+'<label for=mock-challenge>Challenge from the member test page</label><input id=mock-challenge name=challenge type=text required minlength=43 maxlength=43 autocomplete=off><label for=mock-sender>Fictitious sender number</label><input id=mock-sender name=sender type=text required maxlength=40 placeholder="+12025550123" autocomplete=off><label for=mock-code>Mock confirmation code</label><input id=mock-code name=code type=text required inputmode=numeric pattern="[0-9]{10}" minlength=10 maxlength=10 autocomplete=off><button class=secondary>Submit mock inbound event</button></form></section>';
   if(canDemo&&canManage&&recent)body+=`<section class=card><h2>Interactive fictional scenario</h2><p>Create a new simulated session and select it for Home. Use the scenario controls below to ask the real worker to verify Stream A, its interruption, and replacement B. No external provider is called.</p><form method=post action=/admin/demo/scenarios>${field(csrf(req,reply,'create-scenario'))}<input type=hidden name=requestKey value="${randomToken()}"><input type=hidden name=selectionRevision value="${selection?.revision??0}"><label for=scenario-reason>Reason (8–500 characters)</label><input type=text id=scenario-reason name=reason required minlength=8 maxlength=500><button>Create and show fictional session</button></form></section>`;
   for(const p of programs) {
    const streams=(await pool.query('SELECT sequence,video_id,reason,observed_at FROM stream_versions WHERE program_id=$1 ORDER BY sequence DESC',[p.id])).rows;
@@ -240,6 +266,14 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
   protect(req,'create-scenario');const actor=(await principal(req))!;
   const {csrf:_csrf,...input}=z.object({csrf:z.string(),requestKey:z.string().regex(/^[A-Za-z0-9_-]{43}$/),selectionRevision:z.coerce.number().int().min(0),reason:z.string().trim().min(8).max(500)}).strict().parse(req.body);
   await createScenario(actor,input);return reply.code(303).header('Location','/admin').send();
+ });
+ a.post('/admin/demo/whatsapp-inbound',async(req,reply)=>{
+  protect(req,'mock-whatsapp-inbound');
+  const body=z.object({csrf:z.string(),challenge:z.string().regex(/^[A-Za-z0-9_-]{43}$/),sender:z.string().min(1).max(40),code:z.string().regex(/^\d{10}$/)}).strict().parse(req.body);
+  const m=(await principal(req))!;
+  const actor={...m,session_kind:m.session_kind??'fixture',credential_id:m.credential_id??null};
+  const result=await processMockWhatsAppInbound(actor,{challenge:body.challenge,sender:body.sender,code:body.code});
+  return reply.code(303).header('Location','/admin?mockWhatsApp='+(result.linked?'verified':'rejected')).send();
  });
  a.post('/admin/demo/programs/:id/observations',async(req,reply)=>{
   const id=z.object({id:z.string().max(100)}).parse(req.params).id;protect(req,'scenario:'+id);const actor=(await principal(req))!;

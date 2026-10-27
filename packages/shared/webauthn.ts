@@ -17,7 +17,7 @@ export type AuthenticatedMember={id:string;organization_id:string;display_name:s
 const BROWSER_TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const validBrowser=(browser:string)=>BROWSER_TOKEN.test(browser);
 function originConfig(){return {rpID:config.WEBAUTHN_RP_ID,rpName:config.WEBAUTHN_RP_NAME,origin:new URL(config.WEBAUTHN_ORIGIN).origin};}
-async function requireRecentAuthentication(c:any,actor:AuthenticatedMember) {
+export async function requireRecentAuthentication(c:any,actor:AuthenticatedMember) {
  const valid=(await c.query(`SELECT 1 FROM authentication_verifications v
   WHERE v.session_kind=$1 AND v.session_digest=$2 AND v.member_id=$3 AND v.verified_at>now()-interval '15 minutes'
   AND ((v.session_kind='fixture' AND EXISTS(SELECT 1 FROM fixture_sessions s WHERE s.digest=v.session_digest AND s.member_id=v.member_id AND NOT s.revoked AND s.expires_at>now()))
