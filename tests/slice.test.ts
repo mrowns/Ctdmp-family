@@ -271,7 +271,8 @@ async function administrator(f:Awaited<ReturnType<typeof fixture>>,permission='p
  await pool.query('INSERT INTO grants(member_id,permission,branch_id) VALUES($1,$2,null) ON CONFLICT(member_id,permission) DO UPDATE SET branch_id=null',[member,permission]);
  const session=digest(config.FIXTURE_SECRET+':'+member);
  await pool.query('INSERT INTO administrative_verifications VALUES($1,now()) ON CONFLICT(session_digest) DO UPDATE SET verified_at=now()',[session]);
- return {id:member,organization_id:f.org,session_digest:session};
+ await pool.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('fixture',$1,$2) ON CONFLICT(session_kind,session_digest) DO UPDATE SET verified_at=now()",[session,member]);
+ return {id:member,organization_id:f.org,session_digest:session,session_kind:'fixture' as const};
 }
 async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_A',source=f.channel,live=true) {
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
@@ -294,7 +295,7 @@ test('PRIV-001: bounded retention clears stale encrypted payloads and expired ca
  const extraExpiredLink=digest(randomToken());
  await pool.query("INSERT INTO join_links VALUES($1,$2,$3,$4,'LIVE_LINK_OPENED',now()-interval '1 second',false)",[extraExpiredLink,f.org,f.m,f.program]);
  const result=await cleanupEphemeralData(20,f.org);
- assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3});
+ assert.deepEqual(result,{payloadsCleared:2,expiredNotifications:1,noncesDeleted:2,linksDeleted:3,challengesDeleted:0,sessionsDeleted:0});
  const after=(await pool.query('SELECT id,state,payload_cipher,join_link_digest FROM notifications WHERE id=ANY($1::bigint[])',[[stale.id,prepared.id,current.id]])).rows;
  const staleAfter=after.find((row:any)=>row.id===stale.id);const preparedAfter=after.find((row:any)=>row.id===prepared.id);const currentAfter=after.find((row:any)=>row.id===current.id);
  assert.equal(staleAfter?.state,'EXPIRED');assert.equal(staleAfter?.payload_cipher,null);assert.equal(staleAfter?.join_link_digest,null);
@@ -387,7 +388,7 @@ test('ADMIN: source authority, evidence freshness, branch scope and recent authe
  await pool.query('UPDATE grants SET branch_id=$2 WHERE member_id=$1 AND permission=$3',[actor.id,f.org+'-a','program.manage']);
  await assert.rejects(review(),/PERMISSION_DENIED/);
  await pool.query("UPDATE grants SET branch_id=null WHERE member_id=$1 AND permission='program.manage'",[actor.id]);
- await pool.query("UPDATE administrative_verifications SET verified_at=now()-interval '16 minutes' WHERE session_digest=$1",[actor.session_digest]);
+ await pool.query("UPDATE authentication_verifications SET verified_at=now()-interval '16 minutes' WHERE session_kind='fixture' AND session_digest=$1",[actor.session_digest]);
  await assert.rejects(review(),/RECENT_AUTHENTICATION_REQUIRED/);
  assert.equal(await revision(f.program),0);
 });

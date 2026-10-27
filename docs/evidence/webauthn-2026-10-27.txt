@@ -1,0 +1,30 @@
+CTDMP Connect — WebAuthn passkey implementation evidence
+Date: 27 October 2026
+Environment: AWS Lightsail development VPS; repository branch build/phase-1-browser-slice
+Scope: local/test authentication only; fictional accounts; MOCK providers
+
+Implemented:
+- Migration 012_webauthn.sql applied to development and isolated ctdmp_test databases.
+- SimpleWebAuthn packages locked at server 14.0.3 and browser 14.0.0.
+- Explicit RP ID and exact origin configuration. Local/test defaults are localhost at the configured port; request Host does not choose WebAuthn origin.
+- Required resident credentials and user verification for registration; discoverable passkey authentication.
+- Five-minute single-use challenges tied to a browser cookie, plus recent authentication for registration and removal.
+- Stored credential public key, credential ID, signature counter, transport, device/backup metadata and user label; no private key or biometric data is collected.
+- Digest-stored, revocable 12-hour member sessions in HttpOnly, SameSite=Strict cookies; Secure is enabled for configured HTTPS origins.
+- Credential listing/removal; removal revokes sessions issued by that credential and refuses to remove the last active passkey.
+- Bounded worker cleanup for expired challenges and revoked/expired member sessions.
+- Passkey UI and locally served browser library under same-origin script/connect CSP.
+- Fixture sign-in remains clearly labeled as the fictional-account development bootstrap.
+
+Executed verification:
+- `git diff --check`: passed.
+- `pnpm check`: TypeScript passed; 29 PostgreSQL/API tests passed, 0 failed, 0 skipped.
+- `pnpm test:browser`: 19 Chromium checks passed, including a virtual authenticator registering a resident passkey, signing out, then signing in with a discoverable credential and checking the new revocable server session.
+- The browser flow uses isolated ctdmp_test at localhost:3200. It does not contact an external provider.
+- After restarting ctdmp-api and ctdmp-worker, both systemd services reported active. `/health/live` returned `{"status":"ok","mode":"MOCK"}` and `/health/ready` returned `{"status":"ready","scope":"database-only"}`. `/sign-in`, `/assets/passkeys.js`, and `/assets/webauthn/index.js` returned HTTP 200. The sign-in CSP allows only same-origin scripts and connections.
+
+Limits:
+- The browser authenticator is virtual and does not prove physical-device or operating-system behavior.
+- Account creation, recovery, verified WhatsApp identity linking, production-domain RP setup, distributed rate limiting, and production administrator authentication policy remain incomplete.
+- APP_ENV outside local/test is still rejected. No public app deployment, real member account, Meta/YouTube request, message, provider charge, or production credential was used.
+- This is a passkey authentication slice, not full Phase 1 acceptance or launch approval.

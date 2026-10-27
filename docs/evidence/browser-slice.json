@@ -1,6 +1,6 @@
 {
-  "recordedAt": "2026-10-27T00:43:58.834Z",
-  "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; JavaScript disabled",
+  "recordedAt": "2026-10-27T06:33:32.122Z",
+  "environment": "VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core journey plus JavaScript-enabled virtual WebAuthn authenticator; external browser requests intercepted",
   "providerModes": {
     "youtube": "MOCK",
     "whatsapp": "DRY_RUN",
@@ -24,7 +24,8 @@
     "Interactive interruption and replacement controls recover the same personal link without another unique action",
     "Other branch administrator receives no member rows from branch A",
     "Other member and moderator cannot open admin control room; own history stays private",
-    "Worker restart and repeated source evidence preserve notification and action uniqueness"
+    "Worker restart and repeated source evidence preserve notification and action uniqueness",
+    "Virtual authenticator completes discoverable passkey registration and sign-in; server issues a revocable session"
   ],
   "screenshots": [
     "mobile-home.png",
@@ -36,7 +37,7 @@
   "limitations": [
     "No real providers or public deployment",
     "No physical-device validation",
-    "Fixture authentication only",
+    "Fixture sign-in remains the local account bootstrap",
     "Not full Phase 1 acceptance"
   ]
 }

@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { mockStreamDestination } from '../../../packages/integrations/destinations.ts';
 import { createScenario, queueScenarioObservation } from '../../../packages/shared/demo-scenarios.ts';
@@ -10,8 +9,10 @@ import { isSameOrigin } from '../../../packages/shared/http-security.ts';
 import { config } from '../../../packages/shared/config.ts';
 import { digest, randomToken, decrypt } from '../../../packages/integrations/crypto.ts';
 import { DomainError, setOptIn } from '../../../packages/shared/domain.ts';
+import { currentSessionCookie, csrfToken, verifyCsrf } from '../../../packages/shared/csrf.ts';
+import { listCredentials } from '../../../packages/shared/webauthn.ts';
 
-type Member={id:string;organization_id:string;display_name:string;branch_id:string;session_digest:string};
+type Member={id:string;organization_id:string;display_name:string;branch_id:string|null;session_digest:string;session_kind?:'fixture'|'member';credential_id?:string|null};
 type Principal=(req:any,required?:boolean)=>Promise<Member|undefined>;
 export const escapeHtml=(v:unknown)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const label=(v:string)=>escapeHtml(v.replaceAll('_',' ').toLowerCase());
@@ -20,25 +21,24 @@ const dateInZone=(v:unknown,zone:string)=>{try{return escapeHtml(new Intl.DateTi
 export function renderPage(title:string,body:string,member?:Member) {
  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · CTDMP Connect</title><style>
 :root{color-scheme:dark;--navy:#101b2e;--panel:#19283e;--cream:#fff5e2;--muted:#c2cbd9;--gold:#f2cf83}*{box-sizing:border-box}body{margin:0;background:var(--navy);color:var(--cream);font:17px/1.6 system-ui,sans-serif}a{color:var(--gold);text-underline-offset:4px}a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid white;outline-offset:4px}.skip{position:absolute;top:-80px}.skip:focus{top:0;background:black;padding:12px;z-index:9}.banner{padding:8px 20px;text-align:center;background:#423618;color:#ffe6ae;font-size:13px;font-weight:700;letter-spacing:.04em}header,main,footer{max-width:1120px;margin:auto;padding:24px}header{display:flex;gap:24px;align-items:center;justify-content:space-between;border-bottom:1px solid #3b4657}.brand{font-size:21px;font-weight:750;color:var(--cream);text-decoration:none}nav{display:flex;gap:18px;flex-wrap:wrap}nav a{min-height:44px;display:inline-flex;align-items:center}main{padding-top:40px;min-height:65vh}h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.12;margin:12px 0 24px;max-width:800px}h2{line-height:1.3;font-size:24px}.eyebrow{color:var(--gold);text-transform:uppercase;letter-spacing:.12em;font-size:13px;font-weight:700}.muted,small{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:20px}.card{background:var(--panel);padding:28px;border:1px solid #344159;border-radius:16px;margin-bottom:20px}.hero{padding:clamp(24px,5vw,56px);background:linear-gradient(130deg,#24354c,#142138)}.pill{display:inline-block;border:1px solid #8e7849;border-radius:100px;padding:4px 12px;color:var(--gold);font-size:14px}.button,button{display:inline-block;border:0;border-radius:9px;padding:13px 22px;min-height:48px;background:var(--gold);color:#101b2e;font:700 16px system-ui;text-decoration:none;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:transparent;border:1px solid #77849a;color:var(--cream)}input[type=text],input[type=password]{display:block;width:100%;max-width:560px;margin:8px 0 20px;padding:14px;background:#101b2e;color:white;border:1px solid #8794aa;border-radius:8px;font:inherit}label{display:block}input[type=checkbox]{width:22px;height:22px;vertical-align:middle;margin:12px}table{width:100%;border-collapse:collapse;text-align:left;font-size:15px}td,th{padding:12px 8px;border-bottom:1px solid #3b4657;vertical-align:top}th{color:var(--muted)}.scroll{overflow-x:auto}.notice{border-left:4px solid var(--gold);padding:12px 18px;background:#28364b}dl{display:grid;grid-template-columns:minmax(100px,1fr) 2fr;gap:12px}dd{margin:0;overflow-wrap:anywhere}footer{border-top:1px solid #3b4657;color:var(--muted);font-size:14px}form{margin:20px 0}code{overflow-wrap:anywhere}@media(max-width:600px){header{align-items:flex-start;flex-direction:column;gap:4px;padding:20px}main{padding:24px 16px}.card{padding:22px}nav{gap:16px}h1{font-size:36px}dl{grid-template-columns:1fr}dd{margin-bottom:8px}}
-</style></head><body><a class=skip href=#main>Skip to content</a><div class=banner>PRIVATE DEVELOPMENT · FICTIONAL MEMBERS · MOCK PROVIDERS · NO REAL MESSAGES</div><header><a class=brand href=/>CTDMP Connect <span aria-hidden=true>✦</span></a><nav aria-label="Main navigation"><a href=/live>Home</a><a href=/account>My account</a>${member?'<a href=/account/history>My link history</a>':'<a href=/demo/sign-in>Development sign-in</a>'}</nav></header><main id=main>${body}</main><footer>A Digital Family Built in Love.<br>Working product identity. Official affiliation has not been verified.<br>Link-opening records do not prove viewing duration or attendance.</footer></body></html>`;
+</style></head><body><a class=skip href=#main>Skip to content</a><div class=banner>PRIVATE DEVELOPMENT · FICTIONAL MEMBERS · MOCK PROVIDERS · NO REAL MESSAGES</div><header><a class=brand href=/>CTDMP Connect <span aria-hidden=true>✦</span></a><nav aria-label="Main navigation"><a href=/live>Home</a><a href=/account>My account</a>${member?'<a href=/account/history>My link history</a><a href=/account/security>Security</a>':'<a href=/sign-in>Sign in</a>'}</nav></header><main id=main>${body}</main><footer>A Digital Family Built in Love.<br>Working product identity. Official affiliation has not been verified.<br>Link-opening records do not prove viewing duration or attendance.</footer></body></html>`;
 }
 const field=(csrf:string)=>`<input type="hidden" name="csrf" value="${csrf}">`;
 export async function registerPages(a:FastifyInstance,principal:Principal) {
- const csrfFor=(browser:string,session:string,scope:string)=>createHmac('sha256',config.FIXTURE_SECRET).update(JSON.stringify([browser,session,scope])).digest('hex');
+ const csrfFor=(browser:string,session:string,scope:string)=>csrfToken(browser,session,scope);
  const csrf=(req:any,reply:any,scope:string)=>{
   let browser=req.ctdmpCsrfBrowser as string|undefined;
   if(!browser) {
    browser=req.cookies.web_browser??randomToken();
    req.ctdmpCsrfBrowser=browser;
-   if(!req.cookies.web_browser)reply.setCookie('web_browser',browser,{path:'/',httpOnly:true,sameSite:'strict',maxAge:3600});
+   if(!req.cookies.web_browser)reply.setCookie('web_browser',browser,{path:'/',httpOnly:true,secure:new URL(config.WEBAUTHN_ORIGIN).protocol==='https:',sameSite:'strict',maxAge:3600});
   }
-  return csrfFor(browser!,req.cookies.fixture_session??'',scope);
+  return csrfFor(browser!,currentSessionCookie(req.cookies),scope);
  };
  const protect=(req:any,scope:string)=>{
   if(!isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
   const input=z.object({csrf:z.string().length(64)}).passthrough().parse(req.body);
-  const expected=csrfFor(req.cookies.web_browser??'',req.cookies.fixture_session??'',scope);
-  if(!req.cookies.web_browser||!timingSafeEqual(Buffer.from(input.csrf),Buffer.from(expected)))throw new DomainError('INVALID_ACTION',403);
+  if(!verifyCsrf(input.csrf,req.cookies.web_browser??'',currentSessionCookie(req.cookies),scope))throw new DomainError('INVALID_ACTION',403);
  };
  const html=(reply:any,title:string,body:string,m?:Member)=>reply.type('text/html').send(renderPage(title,body,m));
  const current=()=>currentProgram();
@@ -72,22 +72,38 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
   });
   return reply.code(303).header('Location',result).send();
  });
- a.get('/demo/sign-in',async(req,reply)=>html(reply,'Development sign-in',`<section class=card><span class=eyebrow>Private development only</span><h1>Open a fictional account</h1><p>This is a temporary fixture session, not production authentication. An operator must issue a short-lived access code on the VPS. No real member account is available.</p><form method=post action=/demo/sign-in>${field(csrf(req,reply,'login'))}<label for=access>Development access code</label><input id=access name=access type=password required maxlength=200 autocomplete=off><button>Open demo account</button></form><p class=muted>Production startup is blocked while fixture authentication is enabled.</p></section>`));
+ const signInPage=(req:any,reply:any)=>{
+  const passkeyCsrf=csrf(req,reply,'passkey-login');
+  const body=`<section class=card><span class=eyebrow>Secure sign-in</span><h1>Sign in with a passkey</h1><p>A passkey asks your device or security key to verify you. CTDMP Connect does not receive your fingerprint, face scan, or device PIN.</p><button type=button data-passkey-login data-csrf="${escapeHtml(passkeyCsrf)}">Sign in with a passkey</button><p data-passkey-status role=status aria-live=polite></p><p class=muted>Passkey sign-in is available for accounts with a passkey already registered.</p></section>`+
+   (config.FIXTURE_AUTH_ENABLED==='true'?`<section class=card><span class=eyebrow>Development bootstrap</span><h2>Open a fictional account</h2><p>This one-time fixture method is for local account setup only; it is not a production sign-in method.</p><form method=post action=/demo/sign-in>${field(csrf(req,reply,'login'))}<label for=access>Development access code</label><input id=access name=access type=password required maxlength=200 autocomplete=off><button class=secondary>Open demo account</button></form></section>`:'');
+  return reply.type('text/html').send(renderPage('Sign in',body+`<script type=module src=/assets/passkeys.js></script>`));
+ };
+ a.get('/sign-in',signInPage);a.get('/demo/sign-in',signInPage);
  a.post('/demo/sign-in',async(req,reply)=>{
   protect(req,'login');if(config.FIXTURE_AUTH_ENABLED!=='true')throw new DomainError('NOT_FOUND',404);
   const {access}=z.object({access:z.string().min(32).max(200)}).passthrough().parse(req.body);
   const s=(await pool.query('SELECT 1 FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active',[digest(access)])).rowCount;
   if(!s)throw new DomainError('AUTHENTICATION_REQUIRED',401);
   await pool.query('INSERT INTO administrative_verifications(session_digest,verified_at) VALUES($1,now()) ON CONFLICT(session_digest) DO UPDATE SET verified_at=now()',[digest(access)]);
-  reply.setCookie('fixture_session',access,{path:'/',httpOnly:true,sameSite:'strict',maxAge:3600});
+  const member=(await pool.query('SELECT member_id FROM fixture_sessions WHERE digest=$1',[digest(access)])).rows[0];
+  await pool.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('fixture',$1,$2) ON CONFLICT(session_kind,session_digest) DO UPDATE SET verified_at=now()",[digest(access),member.member_id]);
+  reply.clearCookie('member_session',{path:'/'}).setCookie('fixture_session',access,{path:'/',httpOnly:true,secure:new URL(config.WEBAUTHN_ORIGIN).protocol==='https:',sameSite:'strict',maxAge:3600});
   return reply.code(303).header('Location','/account').send();
  });
  a.get('/account',async(req,reply)=>{
   const m=(await principal(req))!;
   const grants=(await pool.query('SELECT permission FROM grants WHERE member_id=$1',[m.id])).rows;
-  return html(reply,'My account',`<span class=eyebrow>Your fictional account</span><h1>Hello, ${escapeHtml(m.display_name)}.</h1><div class=grid><section class=card><h2>My link history</h2><p>Only your deliberate opening actions appear here.</p><a href=/account/history>View my history</a><p><a href=/account/alerts>Open my prepared test alerts</a></p></section><section class=card><h2>Notification preferences</h2><p>You decide whether to receive simulated start alerts.</p><a href=/account/preferences>Manage preferences</a></section>${grants.some(g=>g.permission==='program.read')?'<section class=card><h2>Control room</h2><p>Program evidence and records permitted by your current grants.</p><a href=/admin>Open control room</a></section>':''}</div><form method=post action=/account/sign-out>${field(csrf(req,reply,'logout'))}<button class=secondary>Sign out this browser</button></form>`,m);
+  return html(reply,'My account',`<span class=eyebrow>Your fictional account</span><h1>Hello, ${escapeHtml(m.display_name)}.</h1><div class=grid><section class=card><h2>My link history</h2><p>Only your deliberate opening actions appear here.</p><a href=/account/history>View my history</a><p><a href=/account/alerts>Open my prepared test alerts</a></p></section><section class=card><h2>Notification preferences</h2><p>You decide whether to receive simulated start alerts.</p><a href=/account/preferences>Manage preferences</a><p><a href=/account/security>Manage passkeys and active sign-in options</a></p></section>${grants.some(g=>g.permission==='program.read')?'<section class=card><h2>Control room</h2><p>Program evidence and records permitted by your current grants.</p><a href=/admin>Open control room</a></section>':''}</div><form method=post action=/account/sign-out>${field(csrf(req,reply,'logout'))}<button class=secondary>Sign out this browser</button></form>`,m);
  });
- a.post('/account/sign-out',async(req,reply)=>{protect(req,'logout');await principal(req);await pool.query('UPDATE fixture_sessions SET revoked=true WHERE digest=$1',[digest(req.cookies.fixture_session??'')]);reply.clearCookie('fixture_session',{path:'/'});reply.clearCookie('web_browser',{path:'/'});return reply.code(303).header('Location','/').send();});
+ a.post('/account/sign-out',async(req,reply)=>{protect(req,'logout');const actor=(await principal(req))!;if(actor.session_kind==='member')await pool.query('UPDATE member_sessions SET revoked=true WHERE digest=$1',[actor.session_digest]);else await pool.query('UPDATE fixture_sessions SET revoked=true WHERE digest=$1',[actor.session_digest]);reply.clearCookie('fixture_session',{path:'/'}).clearCookie('member_session',{path:'/'}).clearCookie('web_browser',{path:'/'});return reply.code(303).header('Location','/').send();});
+ a.get('/account/security',async(req,reply)=>{
+  const m=(await principal(req))!;
+  const credentials=await listCredentials(m.id);
+  const registerCsrf=csrf(req,reply,'passkey-register');
+  const rows=credentials.map(c=>`<article class=card><h2>${escapeHtml(c.label)}</h2><dl><dt>Type</dt><dd>${escapeHtml(c.deviceType==='multiDevice'?'Synced passkey':'Device passkey')}</dd><dt>Added</dt><dd>${date(c.createdAt)}</dd><dt>Last used</dt><dd>${date(c.lastUsedAt)}</dd><dt>Backup state</dt><dd>${c.backedUp?'Backed up by authenticator':'Not reported as backed up'}</dd></dl>${credentials.length>1?`<button type=button class=secondary data-passkey-revoke="${escapeHtml(c.id)}" data-csrf="${escapeHtml(csrf(req,reply,'passkey-revoke:'+c.id))}">Remove this passkey</button>`:'<p class=muted>Keep at least one active passkey so you can sign in again.</p>'}</article>`).join('');
+  const body=`<span class=eyebrow>Account security</span><h1>Passkeys</h1><p>Passkeys use your device or security key. CTDMP Connect stores a public key and authenticator metadata; the private key stays with your authenticator.</p><section class=card><label for=passkey-label>Name this passkey</label><input id=passkey-label data-passkey-label type=text maxlength=80 value="This device" autocomplete=off><button type=button data-passkey-register data-csrf="${escapeHtml(registerCsrf)}">Add a passkey</button><p data-passkey-status role=status aria-live=polite></p><p class=muted>Adding a passkey requires a recent sign-in and a browser with WebAuthn support. If you signed in with a fixture account, this is development-only authentication.</p></section><h2>Registered passkeys</h2>${rows||'<section class=card><p>No passkeys are registered for this account yet.</p></section>'}<script type=module src=/assets/passkeys.js></script>`;
+  return html(reply,'Passkeys',body,m);
+ });
  a.get('/account/history',async(req,reply)=>{
   const m=(await principal(req))!;
   const rows=(await pool.query('SELECT c.*,p.title FROM checkin_events c JOIN programs p ON p.id=c.program_id WHERE c.member_id=$1 AND c.organization_id=$2 ORDER BY first_opened_at DESC LIMIT 50',[m.id,m.organization_id])).rows;
@@ -105,7 +121,7 @@ export async function registerPages(a:FastifyInstance,principal:Principal) {
   const canDemo=grants.some(g=>g.permission==='demo.manage'&&!g.branch_id);
   const canManage=grants.some(g=>g.permission==='program.manage'&&!g.branch_id);
   const canSend=grants.some(g=>g.permission==='messaging.manage'&&!g.branch_id);
-  const recent=Boolean((await pool.query("SELECT 1 FROM administrative_verifications WHERE session_digest=$1 AND verified_at>now()-interval '15 minutes'",[m.session_digest])).rowCount);
+  const recent=Boolean((await pool.query("SELECT 1 FROM authentication_verifications WHERE session_digest=$1 AND session_kind=$2 AND member_id=$3 AND verified_at>now()-interval '15 minutes'",[m.session_digest,m.session_kind??'fixture',m.id])).rowCount);
   const selection=(await pool.query('SELECT * FROM program_selections WHERE organization_id=$1',[m.organization_id])).rows[0];
   const programs=(await pool.query('SELECT p.* FROM programs p LEFT JOIN program_selections s ON s.program_id=p.id AND s.organization_id=p.organization_id WHERE p.organization_id=$1 ORDER BY (s.program_id IS NOT NULL) DESC,p.local_date DESC,p.id DESC LIMIT 20',[m.organization_id])).rows;
   const heartbeat=(await pool.query('SELECT max(seen_at) AS seen FROM worker_heartbeats')).rows[0].seen;

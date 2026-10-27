@@ -101,7 +101,7 @@ export async function dispatchOne(id:string):Promise<void> {
   await c.query("UPDATE notifications SET state='DRY_RUN_PREPARED',reason='MOCK_PROVIDER_NO_EXTERNAL_SEND' WHERE id=$1",[id]);
  });
 }
-export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number}> {
+export async function cleanupEphemeralData(batchSize=500,organizationId?:string):Promise<{payloadsCleared:number;expiredNotifications:number;noncesDeleted:number;linksDeleted:number;challengesDeleted:number;sessionsDeleted:number}> {
  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1000)throw new RangeError('Retention batch size must be between 1 and 1000');
  return tx(async c=>{
   const payloads=(await c.query(`SELECT id,join_link_digest FROM notifications
@@ -130,7 +130,17 @@ export async function cleanupEphemeralData(batchSize=500,organizationId?:string)
     AND NOT EXISTS(SELECT 1 FROM notifications x WHERE x.join_link_digest=j.digest)
    ORDER BY j.expires_at,j.digest FOR UPDATE SKIP LOCKED LIMIT $1
   ) DELETE FROM join_links j USING candidates c WHERE j.digest=c.digest RETURNING j.digest`,[batchSize,organizationId??null])).rows;
-  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length};
+  const challenges=(await c.query(`WITH candidates AS (
+   SELECT w.id_digest FROM webauthn_challenges w WHERE (w.expires_at<=now() OR w.consumed_at<=now()-interval '10 minutes')
+    AND ($2::text IS NULL OR w.purpose='LOGIN' OR EXISTS(SELECT 1 FROM members m WHERE m.id=w.member_id AND m.organization_id=$2))
+   ORDER BY w.expires_at,w.id_digest FOR UPDATE SKIP LOCKED LIMIT $1
+  ) DELETE FROM webauthn_challenges w USING candidates c WHERE w.id_digest=c.id_digest RETURNING w.id_digest`,[batchSize,organizationId??null])).rows;
+  const sessions=(await c.query(`WITH candidates AS (
+   SELECT s.digest FROM member_sessions s JOIN members m ON m.id=s.member_id WHERE (s.revoked OR s.expires_at<=now()-interval '1 day')
+    AND ($2::text IS NULL OR m.organization_id=$2) ORDER BY s.expires_at,s.digest FOR UPDATE OF s SKIP LOCKED LIMIT $1
+  ) DELETE FROM member_sessions s USING candidates c WHERE s.digest=c.digest RETURNING s.digest`,[batchSize,organizationId??null])).rows;
+  if(sessions.length)await c.query("DELETE FROM authentication_verifications WHERE session_kind='member' AND session_digest=ANY($1::text[])",[sessions.map((row:any)=>row.digest)]);
+  return {payloadsCleared:payloads.length,expiredNotifications:expired.length,noncesDeleted:nonces.length,linksDeleted:links.length,challengesDeleted:challenges.length,sessionsDeleted:sessions.length};
  });
 }
 export async function setOptIn(member:string,value:boolean) {

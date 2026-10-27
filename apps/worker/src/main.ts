@@ -19,7 +19,7 @@ while(!stopped) {
   for(let i=0;i<25 && await reconcileReceiptOne();i++) {}
   if(Date.now()-lastRetentionSweep>=60000) {
    const cleanup=await cleanupEphemeralData(500);lastRetentionSweep=Date.now();
-   if(cleanup.payloadsCleared||cleanup.noncesDeleted||cleanup.linksDeleted)console.log('Ephemeral retention cleanup:',JSON.stringify(cleanup));
+   if(cleanup.payloadsCleared||cleanup.noncesDeleted||cleanup.linksDeleted||cleanup.challengesDeleted||cleanup.sessionsDeleted)console.log('Ephemeral retention cleanup:',JSON.stringify(cleanup));
   }
   for(let i=0;i<25 && await planOne();i++) {}
   const pending=await pool.query("SELECT id FROM notifications WHERE state='PLANNED' ORDER BY id LIMIT 100");

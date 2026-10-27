@@ -1,4 +1,4 @@
-# Status — 25 October 2026
+# Status — 27 October 2026
 
 Phase 0 foundation and Phase 1 backend/browser slice implemented in part. Full Phase 1 acceptance has NOT passed. Repository on VPS: `/home/ubuntu/ctdmp-connect`; origin `https://github.com/mrowns/Ctdmp-family.git`. Existing backend preserved in baseline commit `0684aa8`; implementation checkpoint `cbe4351` on branch `build/phase-1-browser-slice`; latest documentation checkpoint is identified by `git log -1`.
 
@@ -108,3 +108,16 @@ Added a disabled-by-default Meta WhatsApp callback route. The GET handshake vali
 The current adapter deliberately rejects inbound member messages and unsupported WhatsApp webhook fields so they are not acknowledged and silently lost. Message-intent handling, account/number ownership, mapping administration, real sender integration and Meta account activation remain incomplete. `META_WEBHOOK_ENABLED` defaults to false, the mapping registry is empty, outbound sending remains disabled, and production environments remain blocked. Payload shape reference: Meta's official [WhatsApp Cloud API collection](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api?entity=request-13382743-ba924e99-3d98-4954-b4e3-73a519939c33).
 
 Actual verification on the VPS: migration 011 applied to development and isolated test databases; TypeScript passed; 29 PostgreSQL/API tests passed with 0 failures/skips; 18 Chromium checks passed with JavaScript disabled. The new case verifies challenge and signature failures, durable deduplication, phone/WABA mismatch handling, normalized privacy-safe storage, receipt reconciliation, and inbound-message rejection. No real Meta credentials/account or external webhook was used. After the code restart, liveness/readiness returned MOCK/database-ready and the disabled Meta route returned 404. The first immediate probe raced startup; retry succeeded. See docs/evidence/meta-webhook-2026-10-27.txt.
+
+
+## 27 October checkpoint — WebAuthn passkey sign-in
+
+Source checkpoint: `37cb636de884f5f4801cf486149467e9584486be` on `build/phase-1-browser-slice`.
+
+Added `@simplewebauthn/server` 14.0.3 and `@simplewebauthn/browser` 14.0.0 from the maintained SimpleWebAuthn packages. Migration 012 adds discoverable-account handles, public credential records, one-use browser-bound challenges, revocable member sessions, and recent-authentication records. The RP ID and expected origin are fixed configuration values; local defaults use `localhost` and the configured port. Public/staging startup remains rejected while `APP_ENV` is not local/test.
+
+A recently authenticated fictional member can register a resident passkey with user verification required. The server verifies origin, RP ID, challenge, signature and user verification using SimpleWebAuthn; it stores the public key, counter, transport/device/backup metadata and a label. Passkey login uses discoverable credentials, checks the returned user handle, updates the counter and creates a digest-stored 12-hour session in an HttpOnly, SameSite=Strict cookie. Logout and credential revocation revoke server-side sessions. The account security page lists registered passkeys. Browser code is served locally from the pinned package under a same-origin-only script/connect CSP.
+
+Fixture sign-in remains an explicitly labeled development bootstrap for registering the first passkey on fictional accounts. Public account creation, username setup, verified WhatsApp linking, recovery, real-domain RP configuration, production admin assurance and physical-device checks are not complete. The API and worker were restarted and both reported active; loopback liveness/readiness returned MOCK/database-ready, and the passkey UI plus locally served browser module returned HTTP 200. The services remain loopback-only; no public app deployment or real provider use occurred.
+
+Actual verification: `pnpm typecheck` passed; `pnpm test` passed all 29 PostgreSQL/API checks; `pnpm test:browser` passed the existing browser slice plus a Chromium virtual authenticator registration and discoverable passkey sign-in. The passkey browser case used a unique fictional member in isolated `ctdmp_test`. Detailed output is recorded in `docs/evidence/webauthn-2026-10-27.txt`; browser JSON is `docs/evidence/browser-slice.json`. Full Phase 1 acceptance and the complete product remain unfinished.

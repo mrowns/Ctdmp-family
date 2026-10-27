@@ -24,13 +24,13 @@ const auth=async(member:string)=>{
  return token;
 };
 try {
- await server.listen({host:'127.0.0.1',port:config.PORT});
+ step='listen API';await server.listen({host:'127.0.0.1',port:config.PORT});
  await setOptIn('alice',true);
  await pool.query("INSERT INTO programs(id,organization_id,title,local_date) SELECT $1,'demo-org','CTDMP — browser simulation',GREATEST(COALESCE(max(local_date),current_date),current_date)+1 FROM programs",[program]);
  await pool.query("INSERT INTO program_selections(organization_id,program_id) VALUES('demo-org',$1) ON CONFLICT(organization_id) DO UPDATE SET program_id=excluded.program_id,revision=program_selections.revision+1",[program]);
  await pool.query("INSERT INTO official_channels VALUES($1,'demo-org',$2,true,true)",[channel,program]);
  worker=spawn(process.execPath,['node_modules/tsx/dist/cli.mjs','apps/worker/src/main.ts'],{env:process.env,stdio:['ignore','ignore','ignore']});
- browser=await chromium.launch({headless:true});
+ step='launch Chromium';browser=await chromium.launch({headless:true});
  const context=await browser.newContext({viewport:{width:390,height:844},javaScriptEnabled:false});
  // Block all outbound browser requests, including the fictional YouTube destinations.
  await context.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.fulfill({contentType:'text/html',body:'<h1>MOCK destination intercepted; no external request sent.</h1>'}));
@@ -104,7 +104,38 @@ try {
  await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,'MockVideo_B',$2,'CTDMP',true,revision FROM programs WHERE id=$1",[program,channel]);
  await wait(async()=>Boolean((await pool.query("SELECT 1 FROM mock_observations WHERE program_id=$1 AND outcome='ALREADY_CURRENT'",[program])).rowCount));
  assert.equal((await pool.query("SELECT count(*)::int n FROM notifications WHERE program_id=$1 AND member_id='alice'",[program])).rows[0].n,1);assert.equal(await count(),1);pass('Worker restart and repeated source evidence preserve notification and action uniqueness');
- const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; JavaScript disabled',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png'],limitations:['No real providers or public deployment','No physical-device validation','Fixture authentication only','Not full Phase 1 acceptance']};
+ step='passkey registration and sign-in';
+ const passkeyContext=await browser.newContext({viewport:{width:390,height:844},javaScriptEnabled:true});
+ await passkeyContext.route('**/*',route=>new URL(route.request().url()).origin==='http://localhost:'+config.PORT?route.continue():route.fulfill({contentType:'text/html',body:'External request blocked in local verification.'}));
+ const passkeyPage=await passkeyContext.newPage();
+ const cdp=await passkeyContext.newCDPSession(passkeyPage);
+ await cdp.send('WebAuthn.enable');
+ await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+ const passkeyMember='passkey-'+randomUUID();
+ await pool.query("INSERT INTO members(id,organization_id,branch_id,display_name,active) SELECT $1,organization_id,branch_id,$1,true FROM members WHERE id='alice'",[passkeyMember]);
+ const fixture=await auth(passkeyMember);
+ await passkeyContext.addCookies([{name:'fixture_session',value:fixture,url:'http://localhost:'+config.PORT}]);
+ const localBase='http://localhost:'+config.PORT;
+ step='passkey fixture bootstrap';await passkeyPage.goto(localBase+'/demo/sign-in');
+ await passkeyPage.getByLabel('Development access code').fill(fixture);
+ await passkeyPage.getByRole('button',{name:'Open demo account'}).click();
+ await passkeyPage.getByRole('heading',{name:'Hello, '+passkeyMember+'.'}).waitFor();
+ step='passkey registration';await passkeyPage.goto(localBase+'/account/security');
+ const clientAsset=await passkeyPage.request.get(localBase+'/assets/passkeys.js');assert.equal(clientAsset.status(),200);
+ const browserAsset=await passkeyPage.request.get(localBase+'/assets/webauthn/index.js');assert.equal(browserAsset.status(),200);
+ await passkeyPage.getByRole('button',{name:'Add a passkey'}).click();
+ await passkeyPage.getByRole('heading',{name:'This device',exact:true}).waitFor();
+ assert.equal((await pool.query('SELECT count(*)::int n FROM webauthn_credentials WHERE member_id=$1 AND revoked_at IS NULL',[passkeyMember])).rows[0].n,1);
+ step='passkey sign-out';await passkeyPage.goto(localBase+'/account');
+ await passkeyPage.getByRole('button',{name:'Sign out this browser'}).click();
+ step='passkey discoverable sign-in';await passkeyPage.goto(localBase+'/sign-in');
+ await passkeyPage.getByRole('button',{name:'Sign in with a passkey'}).click();
+ await passkeyPage.getByRole('heading',{name:'Hello, '+passkeyMember+'.'}).waitFor();
+ assert.equal((await pool.query('SELECT count(*)::int n FROM member_sessions WHERE member_id=$1 AND NOT revoked AND expires_at>now()',[passkeyMember])).rows[0].n,1);
+ assert.ok((await pool.query('SELECT last_used_at FROM webauthn_credentials WHERE member_id=$1 AND revoked_at IS NULL',[passkeyMember])).rows[0].last_used_at);
+ pass('Virtual authenticator completes discoverable passkey registration and sign-in; server issues a revocable session');
+ await passkeyContext.close();
+ const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; JavaScript disabled',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png'],limitations:['No real providers or public deployment','No physical-device validation','Fixture sign-in remains the local account bootstrap','Not full Phase 1 acceptance']};
  await writeFile('docs/evidence/browser-slice.json',JSON.stringify(evidence,null,2)+'\n');
-} catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name:'UnknownError'));process.exitCode=1;}
+} catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name+': '+e.message:'UnknownError'));process.exitCode=1;}
 finally {if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await new Promise<void>(resolve=>worker!.once('exit',()=>resolve()));}await browser?.close();await server.close();await pool.end();}

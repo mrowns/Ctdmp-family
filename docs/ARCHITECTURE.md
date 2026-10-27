@@ -11,3 +11,12 @@ GET joining page creates only a transient nonce and browser context. Protected P
 All services are loopback-only on the VPS; no reverse proxy, HTTPS, public DNS or production infrastructure is configured. Database Redis and application logs do not intentionally include bearer links. Fastify request logging is disabled pending a reviewed redaction logger.
 
 The present mock title/date matcher is not a production verifier. Human approval commands, competing-candidate tooling, schedule recurrence and real provider health policies still need implementation.
+
+
+## Passkey authentication — local/test slice
+
+A fixed `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` configure both the server verification and browser ceremony. Defaults resolve to `localhost` at the configured local port; no request Host value changes the relying party. Registration options create required resident credentials with user verification. Challenges are short-lived, single-use, and tied to a digest of the browser CSRF cookie and, for registration, the current member.
+
+The server stores a random per-member WebAuthn user handle, credential public key, credential ID, counter, transport/device/backup metadata and display label. Private keys remain in authenticators. Discoverable login verifies the account handle and signature, then creates an opaque 12-hour member session whose digest is stored in PostgreSQL. The browser receives only an HttpOnly, SameSite=Strict cookie. Session verification records support the same recent-authentication gate as fixture bootstrap sessions. Browser modules are served from the installed pinned dependency under a same-origin CSP.
+
+The first passkey is added only after a recent fixture sign-in on a fictional member. This is not public account creation or production authentication. Recovery, verified WhatsApp linking, owned-domain configuration, production session/admin policy and native/physical-device support remain open.

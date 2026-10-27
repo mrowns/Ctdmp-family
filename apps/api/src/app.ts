@@ -2,6 +2,9 @@ import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
 import cookie from '@fastify/cookie';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { currentProgram } from '../../../packages/shared/programs.ts';
 import { reviewCandidate, finishProgram, selectProgram, setSendingPaused, setMockChannelApproval, setProgramSchedule } from '../../../packages/shared/administration.ts';
@@ -10,12 +13,15 @@ import { registerPages, renderPage } from '../../web/src/pages.ts';
 import { pool, tx } from '../../../packages/db/index.ts';
 import { config } from '../../../packages/shared/config.ts';
 import { digest, randomToken } from '../../../packages/integrations/crypto.ts';
+import { currentSessionCookie, verifyCsrf } from '../../../packages/shared/csrf.ts';
+import { authenticationOptions, registrationOptions, verifyAuthentication, verifyRegistration, listCredentials, revokeCredential } from '../../../packages/shared/webauthn.ts';
+import type { AuthenticatedMember } from '../../../packages/shared/webauthn.ts';
 import { metaVerificationChallenge, parseMetaWhatsAppStatuses, verifyMetaSignature } from '../../../packages/integrations/meta-whatsapp-webhook.ts';
 import { mintNonce, confirmJoin, DomainError, setOptIn } from '../../../packages/shared/domain.ts';
 export async function app() {
  const a=Fastify({logger:false,bodyLimit:65536,trustProxy:false});
  await a.register(formbody);await a.register(cookie);
- a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");return payload;});
+ a.addHook('onSend',async (_req,reply,payload)=>{reply.header('Cache-Control','private, no-store').header('Referrer-Policy','no-referrer').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");return payload;});
  a.setErrorHandler((err,req,reply)=>{const known=err instanceof DomainError;const errorStatus=known?err.status:err instanceof z.ZodError?422:500;
   if(req.headers.accept?.includes('text/html')) {
    const status=errorStatus;
@@ -23,15 +29,75 @@ export async function app() {
    return reply.code(status).type('text/html').send(renderPage('Please try again',`<section class=card data-error-code="${known?err.code:"REQUEST_FAILED"}"><h1>${message}</h1><p>Please return to the current page and reload before trying again.</p><a href=/live>Return to live information</a> · <a href=/demo/sign-in>Development sign-in</a></section>`));
   }
   reply.code(errorStatus).send({error:{code:known?err.code:'REQUEST_FAILED',message:known&&err.status===503?'We are checking the livestream link.':'The request could not be completed.',requestId:req.id,retryable:known&&err.status===503,fieldErrors:[]}});});
- async function principal(req:any,required=true) {
+ function principal(req:any):Promise<AuthenticatedMember>;
+ function principal(req:any,required:true):Promise<AuthenticatedMember>;
+ function principal(req:any,required:false):Promise<AuthenticatedMember|undefined>;
+ async function principal(req:any,required=true):Promise<AuthenticatedMember|undefined> {
   const auth=req.headers.authorization;
-  const token=typeof auth==='string' && auth.startsWith('Bearer ')?auth.slice(7):(req.cookies.fixture_session??'');
-  if(token && !auth && !['GET','HEAD'].includes(req.method) && !isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
-  if(!token || config.FIXTURE_AUTH_ENABLED!=='true') {if(required) throw new DomainError('AUTHENTICATION_REQUIRED',401);return undefined;}
-  const row=(await pool.query('SELECT m.*,s.digest AS session_digest FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active',[digest(token)])).rows[0];
-  if(!row && required) throw new DomainError('AUTHENTICATION_REQUIRED',401);
-  return row;
+  const token=typeof auth==='string'&&auth.startsWith('Bearer ')?auth.slice(7):currentSessionCookie(req.cookies);
+  const fromCookie=!(typeof auth==='string'&&auth.startsWith('Bearer '))&&Boolean(token);
+  if(fromCookie&&!['GET','HEAD'].includes(req.method)&&!isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
+  if(!token) {if(required)throw new DomainError('AUTHENTICATION_REQUIRED',401);return undefined;}
+  const tokenDigest=digest(token);
+  const passkey=(await pool.query(`SELECT m.*,s.digest AS session_digest,'member'::text AS session_kind,s.credential_id
+   FROM member_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active`,[tokenDigest])).rows[0];
+  if(passkey)return passkey;
+  if(config.FIXTURE_AUTH_ENABLED==='true') {
+   const fixture=(await pool.query(`SELECT m.*,s.digest AS session_digest,'fixture'::text AS session_kind,NULL::text AS credential_id
+    FROM fixture_sessions s JOIN members m ON m.id=s.member_id WHERE s.digest=$1 AND NOT s.revoked AND s.expires_at>now() AND m.active`,[tokenDigest])).rows[0];
+   if(fixture)return fixture;
+  }
+  if(required)throw new DomainError('AUTHENTICATION_REQUIRED',401);
+  return undefined;
  }
+ const webauthnBrowserRoot=resolve(dirname(fileURLToPath(import.meta.url)),'../../../node_modules/@simplewebauthn/browser/esm');
+ const webClientPath=resolve(dirname(fileURLToPath(import.meta.url)),'../../web/public/passkeys.js');
+ a.get('/assets/passkeys.js',async(_req,reply)=>reply.type('application/javascript; charset=utf-8').send(await readFile(webClientPath)));
+ a.get('/assets/webauthn/*',async(req,reply)=>{
+  const relative=String((req.params as any)['*']??'');
+  if(!/^[A-Za-z0-9_./-]+\.js$/.test(relative)||relative.split('/').includes('..'))throw new DomainError('NOT_FOUND',404);
+  const file=resolve(webauthnBrowserRoot,relative);
+  if(!file.startsWith(webauthnBrowserRoot+sep))throw new DomainError('NOT_FOUND',404);
+  try{return reply.type('application/javascript; charset=utf-8').send(await readFile(file));}catch{throw new DomainError('NOT_FOUND',404);}
+ });
+ const passkeyAction=(req:any,body:{csrf:string},scope:string)=>{
+  if(!isSameOrigin(req))throw new DomainError('INVALID_ORIGIN',403);
+  if(!verifyCsrf(body.csrf,req.cookies.web_browser??'',currentSessionCookie(req.cookies),scope))throw new DomainError('INVALID_ACTION',403);
+ };
+ const credentialResponseBase={
+  id:z.string().min(1).max(2048),rawId:z.string().min(1).max(2048),type:z.literal('public-key'),
+  authenticatorAttachment:z.enum(['platform','cross-platform']).optional(),clientExtensionResults:z.record(z.string(),z.unknown()).default({}),
+ };
+ const registrationResponse=z.object({...credentialResponseBase,response:z.object({clientDataJSON:z.string().min(1).max(12000),attestationObject:z.string().min(1).max(50000),transports:z.array(z.string().max(24)).max(8).optional()}).passthrough()}).passthrough().refine(v=>v.id===v.rawId);
+ const authenticationResponse=z.object({...credentialResponseBase,response:z.object({clientDataJSON:z.string().min(1).max(12000),authenticatorData:z.string().min(1).max(12000),signature:z.string().min(1).max(12000),userHandle:z.string().max(512).optional()}).passthrough()}).passthrough().refine(v=>v.id===v.rawId);
+ a.post('/api/v1/auth/passkeys/registration/options',async req=>{
+  const body=z.object({csrf:z.string().length(64),label:z.string().trim().min(1).max(80)}).strict().parse(req.body);passkeyAction(req,body,'passkey-register');
+  return registrationOptions((await principal(req))!,req.cookies.web_browser??'',body.label);
+ });
+ a.post('/api/v1/auth/passkeys/registration/verify',async req=>{
+  const body=z.object({csrf:z.string().length(64),challengeId:z.string().regex(/^[A-Za-z0-9_-]{43}$/),label:z.string().trim().min(1).max(80),response:registrationResponse}).strict().parse(req.body);passkeyAction(req,body,'passkey-register');
+  return verifyRegistration((await principal(req))!,req.cookies.web_browser??'',body.challengeId,body.response as any,body.label);
+ });
+ a.post('/api/v1/auth/passkeys/login/options',async req=>{
+  const body=z.object({csrf:z.string().length(64)}).strict().parse(req.body);passkeyAction(req,body,'passkey-login');
+  return authenticationOptions(req.cookies.web_browser??'');
+ });
+ a.post('/api/v1/auth/passkeys/login/verify',async(req,reply)=>{
+  const body=z.object({csrf:z.string().length(64),challengeId:z.string().regex(/^[A-Za-z0-9_-]{43}$/),response:authenticationResponse}).strict().parse(req.body);passkeyAction(req,body,'passkey-login');
+  const session=await verifyAuthentication(req.cookies.web_browser??'',body.challengeId,body.response as any);
+  if(req.cookies.member_session)await pool.query('UPDATE member_sessions SET revoked=true WHERE digest=$1',[digest(req.cookies.member_session)]);
+  const secure=new URL(config.WEBAUTHN_ORIGIN).protocol==='https:';
+  reply.clearCookie('fixture_session',{path:'/'}).clearCookie('member_session',{path:'/'}).setCookie('member_session',session.token,{path:'/',httpOnly:true,secure,sameSite:'strict',maxAge:session.expiresInSeconds});
+  return {signedIn:true,redirect:'/account'};
+ });
+ a.get('/api/v1/me/passkeys',async req=>({items:await listCredentials((await principal(req))!.id)}));
+ a.post('/api/v1/me/passkeys/:id/revoke',async(req,reply)=>{
+  const id=z.object({id:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).parse(req.params).id;
+  const body=z.object({csrf:z.string().length(64)}).strict().parse(req.body);passkeyAction(req,body,'passkey-revoke:'+id);
+  const actor=(await principal(req))!;const result=await revokeCredential(actor,id);
+  if(result.revokedCurrentSession)reply.clearCookie('member_session',{path:'/'});
+  return result;
+ });
  const page=(body:string)=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CTDMP Connect — Demo</title><style>body{font:18px system-ui;background:#101c30;color:#fff4df;max-width:44rem;margin:3rem auto;padding:1rem}a{color:#f3cf81}button{font:inherit;padding:1rem 2rem;border:0;border-radius:.5rem;background:#f3cf81;color:#101c30}small{display:block;margin:2rem 0}</style><body><p>MOCK ENVIRONMENT · NO REAL MESSAGES</p><h1>CTDMP Connect</h1>${body}<small>Working product identity. Official affiliation has not been verified.</small></body></html>`;
  a.get('/health/live',async()=>({status:'ok',mode:'MOCK'}));
  a.get('/health/ready',async(_req,reply)=>{try{await pool.query('SELECT 1');return {status:'ready',scope:'database-only'};}catch{reply.code(503);return {status:'unavailable'};}});
@@ -42,7 +108,7 @@ export async function app() {
   const token=z.object({token:z.string().max(100)}).parse(req.params).token;
   // HEAD follows Fastify GET handler, but may create only a transient nonce, never engagement.
   const browser=randomToken();const nonce=await mintNonce(token,browser);
-  reply.setCookie('join_browser',browser,{path:'/j/',httpOnly:true,sameSite:'strict',maxAge:300});
+  reply.setCookie('join_browser',browser,{path:'/j/',httpOnly:true,secure:new URL(config.WEBAUTHN_ORIGIN).protocol==='https:',sameSite:'strict',maxAge:300});
   return reply.type('text/html').send(page(`<h2>Open the livestream</h2><p>This link is associated with its recipient. Opening it does not prove who watched or how long.</p><form method="post" action="/j/${encodeURIComponent(token)}/confirm"><input type="hidden" name="nonce" value="${nonce}"><button type="submit">Watch Live</button></form><p>If the stream is being checked, your action will not be recorded.</p>`));
  });
  a.post('/j/:token/confirm',async(req,reply)=>{

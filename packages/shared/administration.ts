@@ -2,13 +2,14 @@ import type { PoolClient } from 'pg';
 import { tx } from '../db/index.ts';
 import { DomainError } from './domain.ts';
 import { recordTransition } from './programs.ts';
-export type AdminActor={id:string;organization_id:string;session_digest:string};
+export type AdminActor={id:string;organization_id:string;session_digest:string;session_kind?:'fixture'|'member'};
 export type ProgramCommand={revision:number;reason:string};
 export async function requireAdministration(c:PoolClient,actor:AdminActor,permission:string) {
  const member=(await c.query('SELECT id FROM members WHERE id=$1 AND organization_id=$2 AND active FOR SHARE',[actor.id,actor.organization_id])).rowCount;
  if(!member)throw new DomainError('AUTHENTICATION_REQUIRED',401);
- const session=(await c.query(`SELECT s.digest,v.verified_at FROM fixture_sessions s JOIN administrative_verifications v ON v.session_digest=s.digest
- WHERE s.digest=$1 AND s.member_id=$2 AND NOT s.revoked AND s.expires_at>now() AND v.verified_at>now()-interval '15 minutes' FOR SHARE OF s,v`,[actor.session_digest,actor.id])).rowCount;
+ const session=(await c.query(`SELECT 1 FROM authentication_verifications v WHERE v.session_digest=$1 AND v.session_kind=$3 AND v.member_id=$2 AND v.verified_at>now()-interval '15 minutes'
+ AND ((v.session_kind='fixture' AND EXISTS(SELECT 1 FROM fixture_sessions s WHERE s.digest=v.session_digest AND s.member_id=v.member_id AND NOT s.revoked AND s.expires_at>now()))
+ OR (v.session_kind='member' AND EXISTS(SELECT 1 FROM member_sessions s WHERE s.digest=v.session_digest AND s.member_id=v.member_id AND NOT s.revoked AND s.expires_at>now())))`,[actor.session_digest,actor.id,actor.session_kind??'fixture'])).rowCount;
  if(!session)throw new DomainError('RECENT_AUTHENTICATION_REQUIRED',403);
  const grant=(await c.query('SELECT 1 FROM grants WHERE member_id=$1 AND permission=$2 AND branch_id IS NULL FOR SHARE',[actor.id,permission])).rowCount;
  if(!grant)throw new DomainError('PERMISSION_DENIED',403);
