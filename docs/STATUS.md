@@ -89,7 +89,7 @@ Actual verification on Lightsail: pnpm check passed TypeScript and 27 PostgreSQL
 
 Limits: this is a one-off MOCK schedule editor. Real recurrence, the organization-approved schedule/time zone, authoritative channel evidence and live YouTube verification remain unconfigured. It is not a production schedule or launch approval.
 
-Latest code checkpoint: 157670d22c3a9d5918bcbe8a35892f3c3ec2bebd was pushed to origin/build/phase-1-browser-slice and verified equal to GitHub's branch ref on 2026-10-27. The implementation worktree was clean immediately after that push.
+Latest code checkpoint: de698e1eafe74c18c41337789a17adf4aa71bf62 was pushed to origin/build/phase-1-browser-slice and verified equal to GitHub's branch ref on 2026-10-27. The implementation worktree was clean immediately after that push.
 
 
 ## 27 October checkpoint — ephemeral retention
