@@ -10,6 +10,7 @@ Environment: Lightsail development VPS; APP_ENV=test; isolated ctdmp_test; headl
 - The public Home page has no horizontal overflow at a 360 CSS-pixel viewport.
 - Screenshot: docs/evidence/screenshots/mobile-home-360.png.
 - Full browser slice: all 22 checks passed.
+- GitHub Actions run 40494856142 passed on commit 168c721, including all 22 browser checks.
 
 ## Limits
 
