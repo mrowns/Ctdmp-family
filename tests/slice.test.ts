@@ -5,6 +5,7 @@ import { pool, tx } from '../packages/db/index.ts';
 import { app } from '../apps/api/src/app.ts';
 import { observeOne,planOne,dispatchOne,mintNonce,confirmJoin,setOptIn,processWebhookOne,reconcileReceiptOne,cleanupEphemeralData } from '../packages/shared/domain.ts';
 import { randomToken,digest,decrypt } from '../packages/integrations/crypto.ts';
+import { listWhatsAppIdentities, processMockWhatsAppInbound, startWhatsAppLinkChallenge, unlinkWhatsAppIdentity } from '../packages/shared/whatsapp-linking.ts';
 import { createScenario, queueScenarioObservation } from '../packages/shared/demo-scenarios.ts';
 import { reviewCandidate, finishProgram, selectProgram, setSendingPaused } from '../packages/shared/administration.ts';
 import { config } from '../packages/shared/config.ts';
@@ -274,10 +275,74 @@ async function administrator(f:Awaited<ReturnType<typeof fixture>>,permission='p
  await pool.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('fixture',$1,$2) ON CONFLICT(session_kind,session_digest) DO UPDATE SET verified_at=now()",[session,member]);
  return {id:member,organization_id:f.org,session_digest:session,session_kind:'fixture' as const};
 }
+async function authenticatedFixtureActor(f:Awaited<ReturnType<typeof fixture>>,id:string) {
+ const session=digest(config.FIXTURE_SECRET+':'+id);
+ await pool.query("INSERT INTO authentication_verifications(session_kind,session_digest,member_id) VALUES('fixture',$1,$2) ON CONFLICT(session_kind,session_digest) DO UPDATE SET verified_at=now()",[session,id]);
+ const row=(await pool.query('SELECT display_name,branch_id FROM members WHERE id=$1 AND organization_id=$2',[id,f.org])).rows[0];
+ return {id,organization_id:f.org,display_name:row.display_name,branch_id:row.branch_id,session_digest:session,session_kind:'fixture' as const,credential_id:null};
+}
 async function candidate(f:Awaited<ReturnType<typeof fixture>>,video='MockVideo_A',source=f.channel,live=true) {
  return (await pool.query("INSERT INTO mock_observations(program_id,video_id,channel_id,title,live,expected_revision) SELECT id,$2,$3,'CTDMP simulated candidate',$4,revision FROM programs WHERE id=$1 RETURNING id",[f.program,video,source,live])).rows[0].id as string;
 }
 const revision=async(program:string)=>(await pool.query('SELECT revision FROM programs WHERE id=$1',[program])).rows[0].revision as number;
+
+test('AUTH-002: mock WhatsApp linking verifies sender and code, protects identities, and supports unlink/relink',async()=>{
+ const f=await fixture();
+ const member=await authenticatedFixtureActor(f,f.m),other=await authenticatedFixtureActor(f,f.other);
+ const adminBase=await administrator(f,'demo.manage',f.admin);
+ const admin={...adminBase,display_name:f.admin,branch_id:f.org+'-a',credential_id:null};
+ const phone='+12025550123';
+ await assert.rejects(startWhatsAppLinkChallenge(member,randomToken(),'+4915112345678'),/MOCK_PHONE_REQUIRED/);
+ const started=await startWhatsAppLinkChallenge(member,randomToken(),phone);
+ assert.equal(started.providerMode,'MOCK');assert.match(started.code,/^[0-9]{10}$/);
+ let row=(await pool.query('SELECT * FROM whatsapp_link_challenges WHERE challenge_digest=$1',[digest(started.challenge)])).rows[0];
+ assert.ok(row);assert.notEqual(row.code_digest,started.code);assert.notEqual(row.phone_digest,phone);assert.notEqual(row.encrypted_destination,phone);
+ assert.equal((await pool.query('SELECT * FROM linked_whatsapp_identities WHERE organization_id=$1',[f.org])).rowCount,0);
+ await assert.rejects(processMockWhatsAppInbound(member,{challenge:started.challenge,sender:phone,code:started.code}),/PERMISSION_DENIED/);
+ const wrong=await processMockWhatsAppInbound(admin,{challenge:started.challenge,sender:'+12025550124',code:started.code});
+ assert.equal(wrong.linked,false);
+ row=(await pool.query('SELECT attempts FROM whatsapp_link_challenges WHERE challenge_digest=$1',[digest(started.challenge)])).rows[0];assert.equal(row.attempts,1);
+ const linked=await processMockWhatsAppInbound(admin,{challenge:started.challenge,sender:phone,code:started.code});
+ assert.equal(linked.linked,true);if(!linked.linked)throw new Error('Expected mock test identity to link');
+ assert.equal(linked.maskedDestination,'**** 0123');assert.equal(linked.providerMode,'MOCK');
+ assert.deepEqual((await listWhatsAppIdentities(f.m,f.org)).map(identity=>identity.maskedDestination),['**** 0123']);
+ const encrypted=(await pool.query('SELECT encrypted_destination FROM linked_whatsapp_identities WHERE id=$1',[linked.identityId])).rows[0].encrypted_destination;
+ assert.equal(encrypted.includes(phone),false);
+ await assert.rejects(processMockWhatsAppInbound(admin,{challenge:started.challenge,sender:phone,code:started.code}),/MOCK_INBOUND_REJECTED/);
+ await assert.rejects(startWhatsAppLinkChallenge(other,randomToken(),phone),/IDENTITY_UNAVAILABLE/);
+ const replacementPhone='+12025550124';
+ const replacement=await startWhatsAppLinkChallenge(member,randomToken(),replacementPhone);
+ const replaced=await processMockWhatsAppInbound(admin,{challenge:replacement.challenge,sender:replacementPhone,code:replacement.code});
+ assert.equal(replaced.linked,true);
+ const active=(await listWhatsAppIdentities(f.m,f.org)).filter(identity=>identity.maskedDestination);
+ assert.equal(active.length,1);assert.equal(active[0].maskedDestination,'**** 0124');
+ assert.equal((await pool.query("SELECT count(*)::int n FROM linked_whatsapp_identities WHERE member_id=$1 AND revoked_at IS NULL",[f.m])).rows[0].n,1);
+ if(!replaced.linked)throw new Error('Expected replacement mock identity');
+ await unlinkWhatsAppIdentity(member,replaced.identityId);
+ assert.equal((await listWhatsAppIdentities(f.m,f.org)).length,0);
+ const next=await startWhatsAppLinkChallenge(other,randomToken(),replacementPhone);
+ const reassigned=await processMockWhatsAppInbound(admin,{challenge:next.challenge,sender:replacementPhone,code:next.code});
+ assert.equal(reassigned.linked,true);
+ assert.equal((await pool.query('SELECT member_id FROM linked_whatsapp_identities WHERE organization_id=$1 AND revoked_at IS NULL AND provider_key=$2',[f.org,'mock-whatsapp'])).rows[0].member_id,f.other);
+});
+
+test('AUTH-002: mock WhatsApp inbound is limited to five failed attempts and retention removes expired challenge',async()=>{
+ const f=await fixture(),member=await authenticatedFixtureActor(f,f.m);
+ const adminBase=await administrator(f,'demo.manage',f.admin);
+ const admin={...adminBase,display_name:f.admin,branch_id:f.org+'-a',credential_id:null};
+ const started=await startWhatsAppLinkChallenge(member,randomToken(),'+12025550124');
+ for(let i=0;i<5;i++) {
+  const result=await processMockWhatsAppInbound(admin,{challenge:started.challenge,sender:'+12025550124',code:'0000000000'});
+  assert.equal(result.linked,false);
+ }
+ const row=(await pool.query('SELECT attempts,consumed_at FROM whatsapp_link_challenges WHERE challenge_digest=$1',[digest(started.challenge)])).rows[0];
+ assert.equal(row.attempts,5);assert.ok(row.consumed_at);
+ await assert.rejects(processMockWhatsAppInbound(admin,{challenge:started.challenge,sender:'+12025550124',code:started.code}),/MOCK_INBOUND_REJECTED/);
+ await pool.query("UPDATE whatsapp_link_challenges SET consumed_at=now()-interval '11 minutes' WHERE challenge_digest=$1",[digest(started.challenge)]);
+ const cleanup=await cleanupEphemeralData(20,f.org);assert.equal(cleanup.whatsappChallengesDeleted,1);
+});
+
+
 test('AUTH: new member accounts stay inactive until a passkey verifies; expired pending signups are erased',async()=>{
  const username='p'+randomUUID().replaceAll('-','').slice(0,18);
  const landing=await server.inject({url:'/create-account'});assert.equal(landing.statusCode,200);assert.match(landing.body,/Create account with a passkey/);

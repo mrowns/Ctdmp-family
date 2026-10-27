@@ -1,0 +1,25 @@
+# Mock WhatsApp identity-link slice — 27 October 2026
+
+Environment: Lightsail development VPS; APP_ENV=local; provider mode MOCK; outbound disabled; isolated PostgreSQL test database ctdmp_test for automated runs. No real Meta credentials, real WhatsApp messages, charges, or member phone numbers were used.
+
+## Implemented path
+
+- Member starts a 10-minute challenge from account security using only a reserved fictitious test number.
+- Challenge and code are not stored in plaintext; destination is encrypted and identity/code lookups use keyed digests.
+- Only a recently authenticated demo.manage administrator can submit the mock inbound confirmation.
+- Sender and code must both match; five failed attempts consume the challenge.
+- New test number replaces an old one atomically after successful confirmation. An identity collision rolls back the replacement.
+- The account view displays a masked number; unlink revokes the active identity.
+- Worker retention removes expired/consumed challenge records in bounded batches.
+
+## Actual verification
+
+- pnpm check: TypeScript passed; 33 PostgreSQL/API tests passed, 0 failed, 0 skipped.
+- pnpm test:browser: 21 Chromium checks passed, including member challenge creation, privileged mock inbound form submission, masked identity display, and unlink, with JavaScript disabled for the forms.
+- API restarted; API and worker reported active. Loopback liveness returned MOCK/ok; readiness returned database-only/ready.
+- Screenshot: docs/evidence/screenshots/mock-whatsapp-linked.png.
+- Git diff whitespace check passed before checkpoint.
+
+## Limits
+
+This is a local/test simulation. It does not prove ownership of a real WhatsApp account or use a real provider webhook. Real identity linking, consent policy, production abuse controls, Meta activation, and public account readiness remain incomplete.

@@ -155,8 +155,31 @@ try {
  assert.equal((await pool.query('SELECT count(*)::int n FROM member_sessions WHERE member_id=$1 AND NOT revoked AND expires_at>now()',[passkeyMember])).rows[0].n,1);
  assert.ok((await pool.query('SELECT last_used_at FROM webauthn_credentials WHERE member_id=$1 AND revoked_at IS NULL AND last_used_at IS NOT NULL',[passkeyMember])).rowCount);
  pass('Virtual authenticators create an account, recover it, add a second-device passkey, then sign in discoverably');
+ step='member prepares mock WhatsApp link';await passkeyPage.goto(localBase+'/account/security');
+ await passkeyPage.getByLabel('Fictitious test number').fill('+12025550123');
+ await passkeyPage.getByRole('button',{name:'Prepare mock link challenge'}).click();
+ await passkeyPage.getByRole('heading',{name:'Test link challenge prepared'}).waitFor();
+ const linkChallenge=await passkeyPage.locator('dl dd code').nth(0).innerText();
+ const linkCode=await passkeyPage.locator('dl dd code').nth(1).innerText();
+ assert.match(linkChallenge,/^[A-Za-z0-9_-]{43}$/);assert.match(linkCode,/^[0-9]{10}$/);
+ const linkAdminContext=await browser.newContext({viewport:{width:1280,height:900},javaScriptEnabled:false});
+ const linkAdmin=await linkAdminContext.newPage();await linkAdmin.goto(localBase+'/demo/sign-in');
+ await linkAdmin.getByLabel('Development access code').fill(await auth('admin-a'));
+ await linkAdmin.getByRole('button',{name:'Open demo account'}).click();await linkAdmin.goto(localBase+'/admin');
+ const inbound=linkAdmin.locator('form[action="/admin/demo/whatsapp-inbound"]');
+ await inbound.locator('input[name=challenge]').fill(linkChallenge);
+ await inbound.locator('input[name=sender]').fill('+12025550123');
+ await inbound.locator('input[name=code]').fill(linkCode);
+ await inbound.getByRole('button',{name:'Submit mock inbound event'}).click();
+ await linkAdmin.getByText('The mock inbound challenge was accepted.').waitFor();
+ await passkeyPage.goto(localBase+'/account/security');
+ await passkeyPage.getByText('**** 0123',{exact:false}).waitFor();
+ await passkeyPage.screenshot({path:'docs/evidence/screenshots/mock-whatsapp-linked.png',fullPage:true});
+ await passkeyPage.getByRole('button',{name:'Unlink this test identity'}).click();
+ await passkeyPage.getByText('No test WhatsApp identity is linked.').waitFor();
+ await linkAdminContext.close();pass('Member challenge, privileged mock inbound confirmation, masked identity and unlink work through no-JavaScript forms');
  await passkeyContext.close();
- const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
+ const evidence={recordedAt:new Date().toISOString(),environment:'VPS loopback; isolated ctdmp_test; headless Chromium; no-JavaScript core plus virtual WebAuthn authenticator',providerModes:{youtube:'MOCK',whatsapp:'DRY_RUN',externalBrowserRequests:'INTERCEPTED'},checks,screenshots:['mobile-home.png','mobile-history.png','control-room.png','admin-completed.png','interactive-scenario.png','mock-whatsapp-linked.png'],limitations:['No real providers or public deployment','No physical-device validation; recovery and production account policy remain incomplete','Not full Phase 1 acceptance']};
  await writeFile('docs/evidence/browser-slice.json',JSON.stringify(evidence,null,2)+'\n');
 } catch(e) {console.error('FAIL at '+step+': '+(e instanceof Error?e.name+': '+e.message:'UnknownError'));process.exitCode=1;}
 finally {if(worker&&worker.exitCode===null){worker.kill('SIGTERM');await new Promise<void>(resolve=>worker!.once('exit',()=>resolve()));}await browser?.close();await server.close();await pool.end();}

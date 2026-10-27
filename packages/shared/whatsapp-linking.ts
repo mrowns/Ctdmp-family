@@ -81,10 +81,15 @@ export async function processMockWhatsAppInbound(actor:AuthenticatedMember,input
    await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,'whatsapp_link.mock_identity_conflict',$2,$3)",[actor.id,challengeDigest,{providerMode:'MOCK'}]);
    return {linked:false as const,reason:'IDENTITY_UNAVAILABLE'};
   }
+  const previous=(await c.query("SELECT id FROM linked_whatsapp_identities WHERE organization_id=$1 AND member_id=$2 AND provider_key='mock-whatsapp' AND revoked_at IS NULL FOR UPDATE",[row.organization_id,row.member_id])).rows[0];
+  await c.query('SAVEPOINT whatsapp_identity_replace');
+  if(previous)await c.query('UPDATE linked_whatsapp_identities SET revoked_at=now() WHERE id=$1',[previous.id]);
   const id=randomToken();
   const inserted=(await c.query("INSERT INTO linked_whatsapp_identities(id,organization_id,member_id,provider_key,identity_digest,encrypted_destination) VALUES($1,$2,$3,'mock-whatsapp',$4,$5) ON CONFLICT DO NOTHING RETURNING id",[id,row.organization_id,row.member_id,senderDigest,row.encrypted_destination])).rowCount;
+  if(!inserted)await c.query('ROLLBACK TO SAVEPOINT whatsapp_identity_replace');
+  await c.query('RELEASE SAVEPOINT whatsapp_identity_replace');
   await c.query('UPDATE whatsapp_link_challenges SET consumed_at=now() WHERE challenge_digest=$1',[challengeDigest]);
-  await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,$2,$3,$4)",[actor.id,inserted?'whatsapp_link.mock_verified':'whatsapp_link.mock_identity_conflict',challengeDigest,{providerMode:'MOCK',memberId:row.member_id,identityId:inserted?id:null}]);
+  await c.query("INSERT INTO audit_logs(actor,action,resource_id,details) VALUES($1,$2,$3,$4)",[actor.id,inserted?(previous?'whatsapp_link.mock_replaced':'whatsapp_link.mock_verified'):'whatsapp_link.mock_identity_conflict',challengeDigest,{providerMode:'MOCK',memberId:row.member_id,identityId:inserted?id:null,previousIdentityId:previous?.id??null}]);
   return inserted?{linked:true as const,identityId:id,maskedDestination:mask(sender),providerMode:'MOCK' as const}:{linked:false as const,reason:'IDENTITY_UNAVAILABLE'};
  });
 }
